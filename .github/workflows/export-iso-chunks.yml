@@ -1,0 +1,92 @@
+name: Export OOC Forge ISO chunks
+
+on:
+  push:
+    branches:
+      - iso-v1-build-main
+    paths:
+      - '.github/workflows/export-iso-chunks.yml'
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download successful ISO artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ooc-forge-iso-cfd0401a299aeda7fd634374dbfd88298aed798c
+          path: source
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: gregpaynter/ooc-forge
+          run-id: 33624180723
+
+      - name: Split ISO for retrieval
+        shell: bash
+        run: |
+          set -euo pipefail
+          iso=$(find source -type f -name 'ooc-forge-*.iso' -print -quit)
+          test -n "$iso"
+          mkdir -p chunks metadata
+          split -b 350M -d -a 2 "$iso" chunks/ooc-forge-0.1.0-amd64.iso.part-
+          cp source/*.sha256 source/*.manifest.json metadata/
+          sha256sum chunks/* > metadata/chunks.sha256
+          ls -lh chunks metadata
+
+      - name: Upload chunk 00
+        uses: actions/upload-artifact@v4
+        with:
+          name: ooc-forge-iso-part-00
+          path: chunks/ooc-forge-0.1.0-amd64.iso.part-00
+          compression-level: 0
+          if-no-files-found: error
+
+      - name: Upload chunk 01
+        uses: actions/upload-artifact@v4
+        with:
+          name: ooc-forge-iso-part-01
+          path: chunks/ooc-forge-0.1.0-amd64.iso.part-01
+          compression-level: 0
+          if-no-files-found: error
+
+      - name: Upload chunk 02
+        uses: actions/upload-artifact@v4
+        with:
+          name: ooc-forge-iso-part-02
+          path: chunks/ooc-forge-0.1.0-amd64.iso.part-02
+          compression-level: 0
+          if-no-files-found: error
+
+      - name: Upload chunk 03
+        uses: actions/upload-artifact@v4
+        with:
+          name: ooc-forge-iso-part-03
+          path: chunks/ooc-forge-0.1.0-amd64.iso.part-03
+          compression-level: 0
+          if-no-files-found: error
+
+      - name: Upload chunk 04
+        uses: actions/upload-artifact@v4
+        with:
+          name: ooc-forge-iso-part-04
+          path: chunks/ooc-forge-0.1.0-amd64.iso.part-04
+          compression-level: 0
+          if-no-files-found: error
+
+      - name: Upload chunk 05
+        uses: actions/upload-artifact@v4
+        with:
+          name: ooc-forge-iso-part-05
+          path: chunks/ooc-forge-0.1.0-amd64.iso.part-05
+          compression-level: 0
+          if-no-files-found: error
+
+      - name: Upload metadata
+        uses: actions/upload-artifact@v4
+        with:
+          name: ooc-forge-iso-metadata
+          path: metadata/
+          if-no-files-found: error
