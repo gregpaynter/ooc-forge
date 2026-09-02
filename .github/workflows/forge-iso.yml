@@ -38,10 +38,11 @@ jobs:
             -w /work \
             debian:13 \
             bash -lc '
-              apt-get update &&
-              DEBIAN_FRONTEND=noninteractive apt-get install -y
-                live-build debootstrap rsync xorriso squashfs-tools
-                grub-efi-amd64-bin mtools dosfstools git python3 &&
+              set -eu
+              apt-get update
+              DEBIAN_FRONTEND=noninteractive apt-get install -y \
+                live-build debootstrap rsync xorriso squashfs-tools \
+                grub-efi-amd64-bin mtools dosfstools git python3
               ./iso/build.sh
             '
 
