@@ -49,8 +49,11 @@ jobs:
           status=$?
           set -e
           if [ "$status" -ne 0 ]; then
-            echo "=== OOC Forge live-build failure tail ==="
-            tail -n 180 build/iso/build.log 2>/dev/null || true
+            echo "=== OOC Forge live-build error digest ==="
+            grep -E '(^E:|^W:|ERROR|Error|Unable to locate|not found|failed|Failure|No space|permission denied|dpkg: error|apt.*error|lb .*failed)' \
+              build/iso/build.log 2>/dev/null | tail -n 40 || true
+            echo "=== OOC Forge live-build final 40 lines ==="
+            tail -n 40 build/iso/build.log 2>/dev/null || true
             exit "$status"
           fi
 
