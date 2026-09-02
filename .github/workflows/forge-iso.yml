@@ -77,7 +77,10 @@ jobs:
       - name: Validate ISO artifacts
         run: |
           test -s dist/ooc-forge-*.iso
-          sha256sum -c dist/ooc-forge-*.iso.sha256
+          (
+            cd dist
+            sha256sum -c ooc-forge-*.iso.sha256
+          )
           python -m json.tool dist/ooc-forge-*.iso.manifest.json >/dev/null
 
       - uses: actions/upload-artifact@v4
