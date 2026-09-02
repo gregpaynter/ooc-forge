@@ -1,0 +1,140 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+REPO_URL="https://github.com/gregpaynter/ooc-forge.git"
+FORGE_DATA_ROOT=${FORGE_DATA_ROOT:-/forge-data}
+REQUEST="$FORGE_DATA_ROOT/maintenance/git-update-request.json"
+STATUS="$FORGE_DATA_ROOT/maintenance/git-update-status.json"
+INSTALL_ROOT=/opt/ooc-forge
+STATE_ROOT=/var/lib/ooc-forge
+STAGE=""
+ROLLBACK=""
+SWAPPED=0
+REF=""
+COMMIT=""
+OLD_REF="unknown"
+
+write_status() {
+  local state=$1
+  local message=$2
+  local ref=${3:-}
+  local commit=${4:-}
+  install -d -m 0750 "$(dirname "$STATUS")"
+  python3 - "$STATUS" "$state" "$message" "$ref" "$commit" <<'PY'
+import json
+import os
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+path = Path(sys.argv[1])
+value = {
+    "state": sys.argv[2],
+    "message": sys.argv[3],
+    "ref": sys.argv[4] or None,
+    "commit": sys.argv[5] or None,
+    "updated_at": datetime.now(timezone.utc).isoformat(),
+}
+temporary = path.with_name(f".{path.name}.tmp")
+temporary.write_text(json.dumps(value, indent=2) + "\n", encoding="utf-8")
+os.chmod(temporary, 0o644)
+temporary.replace(path)
+PY
+}
+
+rollback() {
+  set +e
+  if [[ "$SWAPPED" -ne 1 || -z "$ROLLBACK" ]]; then
+    write_status "FAILED" "Git maintenance update failed before the installed runtime was changed." "$REF" "$COMMIT"
+    return
+  fi
+  systemctl stop ooc-forge-web.service ooc-forge-worker.service ooc-forge-sync.service >/dev/null 2>&1
+  rm -rf "$INSTALL_ROOT/.venv"
+  rsync -a --delete --exclude '.venv' "$ROLLBACK/source/" "$INSTALL_ROOT/"
+  if [[ -d "$ROLLBACK/.venv" ]]; then
+    mv "$ROLLBACK/.venv" "$INSTALL_ROOT/.venv"
+  fi
+  printf '%s\n' "$OLD_REF" > "$INSTALL_ROOT/.ooc-source-ref"
+  systemctl restart ooc-forge-web.service ooc-forge-worker.service ooc-forge-sync.service >/dev/null 2>&1
+  write_status "ROLLED_BACK" "Update failed; the previous Forge runtime was restored." "$REF" "$COMMIT"
+}
+
+cleanup() {
+  local rc=$?
+  if [[ "$rc" -ne 0 ]]; then
+    rollback
+  fi
+  [[ -z "$STAGE" ]] || rm -rf "$STAGE"
+  exit "$rc"
+}
+trap cleanup EXIT
+
+if [[ ${EUID:-$(id -u)} -ne 0 ]]; then
+  echo "This maintenance updater must run as root." >&2
+  exit 1
+fi
+if [[ ! -f "$REQUEST" ]]; then
+  echo "No Git update request exists." >&2
+  exit 1
+fi
+
+REF=$(python3 - "$REQUEST" <<'PY'
+import json
+import re
+import sys
+
+value = json.load(open(sys.argv[1], encoding="utf-8"))
+ref = str(value.get("ref") or "").strip()
+valid = re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/-]{0,127}", ref)
+if not valid or ".." in ref or "//" in ref or "@{" in ref or ref.endswith(("/", ".lock")):
+    raise SystemExit("Invalid Git ref")
+print(ref)
+PY
+)
+
+install -d -m 0755 "$STATE_ROOT" "$STATE_ROOT/rollback"
+write_status "FETCHING" "Fetching the requested ref from the canonical OOC Forge repository." "$REF"
+STAGE=$(mktemp -d "$STATE_ROOT/git-update.XXXXXX")
+SOURCE="$STAGE/source"
+VENV="$STAGE/venv"
+mkdir -p "$SOURCE"
+git -C "$SOURCE" init -q
+git -C "$SOURCE" remote add origin "$REPO_URL"
+git -C "$SOURCE" fetch -q --depth=1 origin "$REF"
+git -C "$SOURCE" checkout -q --detach FETCH_HEAD
+COMMIT=$(git -C "$SOURCE" rev-parse HEAD)
+
+write_status "VALIDATING" "Validating fetched source and preparing an isolated Python environment." "$REF" "$COMMIT"
+python3 -m compileall -q "$SOURCE/forge" "$SOURCE/tests"
+python3 -m venv "$VENV"
+"$VENV/bin/python" -m pip install -q --upgrade pip
+"$VENV/bin/python" -m pip install -q "$SOURCE"
+"$VENV/bin/ooc-forge" init >/dev/null
+
+if [[ -f "$INSTALL_ROOT/.ooc-source-ref" ]]; then
+  OLD_REF=$(tr -d '\r\n' < "$INSTALL_ROOT/.ooc-source-ref")
+fi
+ROLLBACK="$STATE_ROOT/rollback/$(date -u +%Y%m%dT%H%M%SZ)-${OLD_REF:0:12}"
+mkdir -p "$ROLLBACK/source"
+rsync -a --exclude '.venv' "$INSTALL_ROOT/" "$ROLLBACK/source/"
+if [[ -d "$INSTALL_ROOT/.venv" ]]; then
+  mv "$INSTALL_ROOT/.venv" "$ROLLBACK/.venv"
+fi
+SWAPPED=1
+
+write_status "INSTALLING" "Installing validated Git source. Forge services will restart briefly." "$REF" "$COMMIT"
+systemctl stop ooc-forge-worker.service ooc-forge-sync.service >/dev/null 2>&1 || true
+rsync -a --delete --exclude '.git' --exclude '.venv' "$SOURCE/" "$INSTALL_ROOT/"
+mv "$VENV" "$INSTALL_ROOT/.venv"
+printf '%s\n' "$COMMIT" > "$INSTALL_ROOT/.ooc-source-ref"
+install -m 0755 "$SOURCE/scripts/ooc-forge-git-update" /usr/local/sbin/ooc-forge-git-update
+
+systemctl restart ooc-forge-web.service ooc-forge-worker.service ooc-forge-sync.service
+systemctl is-active --quiet ooc-forge-web.service
+systemctl is-active --quiet ooc-forge-worker.service
+systemctl is-active --quiet ooc-forge-sync.service
+FORGE_DATA_ROOT="$FORGE_DATA_ROOT" "$INSTALL_ROOT/.venv/bin/ooc-forge" doctor >/dev/null
+
+SWAPPED=0
+write_status "COMPLETED" "Developer/Maintenance Git update completed successfully." "$REF" "$COMMIT"
+rm -f "$REQUEST"
