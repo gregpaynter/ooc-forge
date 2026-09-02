@@ -12,6 +12,7 @@ from forge import __version__
 from forge.config import Config
 from forge.db import create_job, get_job, init_db, list_jobs, set_setting, setting
 from forge.health import capabilities, report
+from forge.maintenance import git_update_status, installed_source_ref, request_git_update
 from forge.storage import (
     ensure_identity,
     ensure_layout,
@@ -190,6 +191,26 @@ def create_app() -> Flask:
             health=report(config),
             capabilities=capabilities(config),
             version=__version__,
+            source_ref=installed_source_ref(),
+            git_update=git_update_status(config),
         )
+
+    @app.post("/system/maintenance/git-update")
+    @login_required
+    def maintenance_git_update():
+        if request.form.get("confirm") != "yes":
+            flash("Confirm that this is a Developer/Maintenance update.")
+            return redirect(url_for("system"))
+        digest = setting(config, "admin_password_hash")
+        if not digest or not check_password_hash(digest, request.form.get("password", "")):
+            flash("Admin password is required to start a Git maintenance update.")
+            return redirect(url_for("system"))
+        try:
+            git_ref = request.form.get("git_ref", "main")
+            request_git_update(config, git_ref)
+            flash(f"Developer/Maintenance Git update requested for {git_ref.strip()}.")
+        except (ValueError, RuntimeError) as error:
+            flash(str(error))
+        return redirect(url_for("system"))
 
     return app

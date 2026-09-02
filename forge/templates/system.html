@@ -1,1 +1,29 @@
-{% extends 'base.html' %}{% block title %}System · OOC Forge{% endblock %}{% block content %}<section class="hero"><p class="eyebrow">System</p><h1>{{ identity.name }}</h1><p>OOC Forge {{ version }}</p></section><section class="grid"><article class="panel"><h2>GPU</h2><pre>{{ health.gpu|tojson(indent=2) }}</pre></article><article class="panel"><h2>Storage</h2><pre>{{ health.storage|tojson(indent=2) }}</pre></article><article class="panel"><h2>ComfyUI</h2><pre>{{ health.comfyui|tojson(indent=2) }}</pre></article><article class="panel"><h2>Capabilities</h2><pre>{{ capabilities|tojson(indent=2) }}</pre></article></section>{% endblock %}
+{% extends 'base.html' %}
+{% block title %}System · OOC Forge{% endblock %}
+{% block content %}
+<section class="hero">
+  <p class="eyebrow">System</p>
+  <h1>{{ identity.name }}</h1>
+  <p>OOC Forge {{ version }}</p>
+  <p>Installed source: <code>{{ source_ref }}</code></p>
+</section>
+<section class="grid">
+  <article class="panel"><h2>GPU</h2><pre>{{ health.gpu|tojson(indent=2) }}</pre></article>
+  <article class="panel"><h2>Storage</h2><pre>{{ health.storage|tojson(indent=2) }}</pre></article>
+  <article class="panel"><h2>ComfyUI</h2><pre>{{ health.comfyui|tojson(indent=2) }}</pre></article>
+  <article class="panel"><h2>Capabilities</h2><pre>{{ capabilities|tojson(indent=2) }}</pre></article>
+</section>
+<section class="panel">
+  <p class="eyebrow">Developer / Maintenance</p>
+  <h2>Update from Git</h2>
+  <p>This bypasses the normal signed Forge release path. Use it only for development, testing, or supervised maintenance.</p>
+  <p><strong>Status:</strong> {{ git_update.state }}{% if git_update.ref %} · {{ git_update.ref }}{% endif %}{% if git_update.commit %} · <code>{{ git_update.commit }}</code>{% endif %}</p>
+  <p>{{ git_update.message }}</p>
+  <form method="post" action="{{ url_for('maintenance_git_update') }}">
+    <label>Branch, tag, or commit ref<input name="git_ref" value="main" required></label>
+    <label>Admin password<input name="password" type="password" autocomplete="current-password" required></label>
+    <label><input name="confirm" type="checkbox" value="yes" required> I understand this is Developer/Maintenance mode and may restart Forge services.</label>
+    <button>Update from Git</button>
+  </form>
+</section>
+{% endblock %}

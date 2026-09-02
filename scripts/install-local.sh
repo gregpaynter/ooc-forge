@@ -11,9 +11,13 @@ FORGE_USER=${FORGE_USER:-forge}
 FORGE_DATA=${FORGE_DATA:-/forge-data}
 COMFYUI_DIR=${COMFYUI_DIR:-/opt/ComfyUI}
 FORGE_DEFAULT_CHECKPOINT=${FORGE_DEFAULT_CHECKPOINT:-}
+SOURCE_REF=${OOC_FORGE_SOURCE_REF:-}
+if [[ -z "$SOURCE_REF" ]]; then
+  SOURCE_REF=$(git -C "$SOURCE_DIR" rev-parse HEAD 2>/dev/null || printf 'local\n')
+fi
 
 apt-get update
-apt-get install -y python3 python3-venv python3-pip nginx avahi-daemon network-manager curl rsync
+apt-get install -y python3 python3-venv python3-pip nginx avahi-daemon network-manager curl rsync git sudo
 
 if ! id "$FORGE_USER" >/dev/null 2>&1; then
   useradd --system --create-home --home-dir /var/lib/ooc-forge --shell /usr/sbin/nologin "$FORGE_USER"
@@ -22,6 +26,7 @@ fi
 install -d -o "$FORGE_USER" -g "$FORGE_USER" -m 0750 "$FORGE_DATA"
 install -d -m 0755 /opt/ooc-forge /etc/ooc-forge
 rsync -a --delete --exclude '.venv' "$SOURCE_DIR/" /opt/ooc-forge/
+printf '%s\n' "$SOURCE_REF" > /opt/ooc-forge/.ooc-source-ref
 python3 -m venv /opt/ooc-forge/.venv
 /opt/ooc-forge/.venv/bin/pip install --upgrade pip
 /opt/ooc-forge/.venv/bin/pip install /opt/ooc-forge
@@ -39,9 +44,13 @@ install -o "$FORGE_USER" -g "$FORGE_USER" -d "$FORGE_DATA/workflows/manual-image
 install -o "$FORGE_USER" -g "$FORGE_USER" -m 0644 "$SOURCE_DIR/workflows/manual-image/manifest.json" "$FORGE_DATA/workflows/manual-image/manifest.json"
 install -o "$FORGE_USER" -g "$FORGE_USER" -m 0644 "$SOURCE_DIR/workflows/manual-image/workflow.json" "$FORGE_DATA/workflows/manual-image/workflow.json"
 
-for unit in ooc-forge-init ooc-forge-web ooc-forge-worker ooc-forge-sync; do
+for unit in ooc-forge-init ooc-forge-web ooc-forge-worker ooc-forge-sync ooc-forge-git-update; do
   install -m 0644 "$SOURCE_DIR/systemd/$unit.service" "/etc/systemd/system/$unit.service"
 done
+install -m 0755 "$SOURCE_DIR/scripts/ooc-forge-git-update" /usr/local/sbin/ooc-forge-git-update
+install -m 0440 "$SOURCE_DIR/systemd/ooc-forge-maintenance.sudoers" /etc/sudoers.d/ooc-forge-maintenance
+visudo -cf /etc/sudoers.d/ooc-forge-maintenance >/dev/null
+
 if [[ -f "$COMFYUI_DIR/main.py" && -x "$COMFYUI_DIR/.venv/bin/python" ]]; then
   install -m 0644 "$SOURCE_DIR/systemd/comfyui.service" /etc/systemd/system/comfyui.service
   systemctl enable comfyui.service
@@ -60,4 +69,5 @@ systemctl enable --now ooc-forge-init ooc-forge-web ooc-forge-worker ooc-forge-s
 echo
 echo "OOC Forge local runtime installed."
 echo "Open: http://forge.local/"
+echo "Developer/Maintenance Git updates are available under System."
 echo "If mDNS is unavailable, use this machine's LAN IP address."

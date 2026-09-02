@@ -1,0 +1,16 @@
+[Unit]
+Description=OOC Forge Developer/Maintenance Git Update
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/ooc-forge/forge.env
+ExecStart=/usr/local/sbin/ooc-forge-git-update
+User=root
+Group=root
+UMask=0027
+Nice=10
+
+[Install]
+WantedBy=multi-user.target
