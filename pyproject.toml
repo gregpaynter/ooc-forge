@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ooc-forge"
+version = "0.1.0"
+description = "OOC Forge local creative appliance runtime"
+requires-python = ">=3.13"
+dependencies = [
+  "Flask>=3.1,<4",
+  "requests>=2.32,<3",
+  "gunicorn>=23,<24",
+]
+
+[project.scripts]
+ooc-forge = "forge.cli:main"
+ooc-forge-worker = "forge.worker:main"
+ooc-forge-sync = "forge.sync:main"
+ooc-forge-execute = "forge.executor:main"
+
+[tool.setuptools.packages.find]
+include = ["forge*"]
+
+[tool.setuptools.package-data]
+forge = ["templates/*.html", "static/*"]
