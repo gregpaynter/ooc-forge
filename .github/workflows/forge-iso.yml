@@ -32,6 +32,7 @@ jobs:
 
       - name: Build inside Debian 13
         run: |
+          set +e
           docker run --rm --privileged \
             -e OOC_FORGE_SOURCE_REF="${GITHUB_SHA}" \
             -v "${PWD}:/work" \
@@ -45,6 +46,13 @@ jobs:
                 grub-efi-amd64-bin mtools dosfstools git python3
               ./iso/build.sh
             '
+          status=$?
+          set -e
+          if [ "$status" -ne 0 ]; then
+            echo "=== OOC Forge live-build failure tail ==="
+            tail -n 180 build/iso/build.log 2>/dev/null || true
+            exit "$status"
+          fi
 
       - name: Validate ISO artifacts
         run: |
