@@ -9,7 +9,7 @@ User=forge
 Group=forge
 EnvironmentFile=-/etc/ooc-forge/forge.env
 WorkingDirectory=/opt/ooc-forge
-ExecStart=/opt/ooc-forge/.venv/bin/gunicorn --workers 2 --bind 127.0.0.1:8080 --access-logfile - forge.app:app
+ExecStart=/opt/ooc-forge/.venv/bin/python -m gunicorn --workers 2 --bind 127.0.0.1:8080 --access-logfile - forge.app:app
 Restart=on-failure
 RestartSec=3
 

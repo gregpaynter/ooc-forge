@@ -1,0 +1,50 @@
+#!/bin/sh
+set -eu
+
+FORGE_USER=forge
+FORGE_DATA=/forge-data
+SOURCE_DIR=/opt/ooc-forge
+
+if ! id "$FORGE_USER" >/dev/null 2>&1; then
+  useradd --system --create-home --home-dir /var/lib/ooc-forge --shell /usr/sbin/nologin "$FORGE_USER"
+fi
+
+install -d -o "$FORGE_USER" -g "$FORGE_USER" -m 0750 "$FORGE_DATA"
+install -d -m 0755 /etc/ooc-forge
+
+python3 -m venv --system-site-packages "$SOURCE_DIR/.venv"
+"$SOURCE_DIR/.venv/bin/pip" install \
+  --no-deps \
+  --no-build-isolation \
+  --disable-pip-version-check \
+  "$SOURCE_DIR"
+
+cat > /etc/ooc-forge/forge.env <<'ENV'
+FORGE_DATA_ROOT=/forge-data
+COMFYUI_URL=http://127.0.0.1:8188
+FORGE_POLL_INTERVAL=5
+FORGE_DEFAULT_CHECKPOINT=
+ENV
+chmod 0640 /etc/ooc-forge/forge.env
+chown root:"$FORGE_USER" /etc/ooc-forge/forge.env
+
+for unit in ooc-forge-init ooc-forge-web ooc-forge-worker ooc-forge-sync; do
+  install -m 0644 "$SOURCE_DIR/systemd/$unit.service" "/etc/systemd/system/$unit.service"
+done
+
+rm -f /etc/nginx/sites-enabled/default
+install -m 0644 "$SOURCE_DIR/nginx/ooc-forge.conf" /etc/nginx/sites-available/ooc-forge
+ln -sfn /etc/nginx/sites-available/ooc-forge /etc/nginx/sites-enabled/ooc-forge
+
+echo forge > /etc/hostname
+
+systemctl enable NetworkManager.service
+systemctl enable avahi-daemon.service
+systemctl enable nginx.service
+systemctl enable ooc-forge-init.service
+systemctl enable ooc-forge-web.service
+systemctl enable ooc-forge-worker.service
+systemctl enable ooc-forge-sync.service
+
+# ComfyUI/PyTorch are intentionally not guessed here. They are added only after
+# the reference RTX 3090 runtime matrix is proven and pinned for the v1 image.

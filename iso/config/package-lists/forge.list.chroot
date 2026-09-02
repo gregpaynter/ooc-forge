@@ -1,0 +1,44 @@
+# OOC Forge appliance base
+linux-image-amd64
+linux-headers-amd64
+live-boot
+live-config
+live-tools
+locales
+systemd-sysv
+sudo
+ca-certificates
+curl
+rsync
+jq
+
+# Forge runtime
+python3
+python3-venv
+python3-pip
+python3-setuptools
+python3-flask
+python3-requests
+gunicorn
+
+# Local network appliance
+network-manager
+avahi-daemon
+nginx
+
+# Storage, recovery and hardware diagnostics
+btrfs-progs
+dosfstools
+e2fsprogs
+efibootmgr
+gdisk
+parted
+pciutils
+smartmontools
+nvme-cli
+usbutils
+
+# Certified v1 GPU family (RTX 3090 reference hardware)
+nvidia-driver
+nvidia-persistenced
+firmware-misc-nonfree

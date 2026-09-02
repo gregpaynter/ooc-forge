@@ -1,0 +1,61 @@
+name: OOC Forge ISO
+
+on:
+  pull_request:
+    paths:
+      - 'iso/**'
+      - 'systemd/**'
+      - 'nginx/**'
+      - 'workflows/**'
+      - 'pyproject.toml'
+      - '.github/workflows/forge-iso.yml'
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate ISO source
+        run: ./iso/validate.sh
+
+  build:
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Build inside Debian 13
+        run: |
+          docker run --rm --privileged \
+            -e OOC_FORGE_SOURCE_REF="${GITHUB_SHA}" \
+            -v "${PWD}:/work" \
+            -w /work \
+            debian:13 \
+            bash -lc '
+              apt-get update &&
+              DEBIAN_FRONTEND=noninteractive apt-get install -y
+                live-build debootstrap rsync xorriso squashfs-tools
+                grub-efi-amd64-bin mtools dosfstools git python3 &&
+              ./iso/build.sh
+            '
+
+      - name: Validate ISO artifacts
+        run: |
+          test -s dist/ooc-forge-*.iso
+          sha256sum -c dist/ooc-forge-*.iso.sha256
+          python -m json.tool dist/ooc-forge-*.iso.manifest.json >/dev/null
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ooc-forge-iso-${{ github.sha }}
+          path: |
+            dist/ooc-forge-*.iso
+            dist/ooc-forge-*.iso.sha256
+            dist/ooc-forge-*.iso.manifest.json
+          if-no-files-found: error
