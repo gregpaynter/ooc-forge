@@ -68,7 +68,10 @@ fi
 
 ISO_OUTPUT="$DIST_DIR/${IMAGE_BASENAME}.iso"
 cp "$ISO_SOURCE" "$ISO_OUTPUT"
-sha256sum "$ISO_OUTPUT" > "$ISO_OUTPUT.sha256"
+(
+  cd "$DIST_DIR"
+  sha256sum "${IMAGE_BASENAME}.iso" > "${IMAGE_BASENAME}.iso.sha256"
+)
 
 python3 - "$ISO_OUTPUT" "$VERSION" "$ARCH" "$SOURCE_REF" "$SOURCE_DATE_EPOCH" <<'PY'
 import hashlib
