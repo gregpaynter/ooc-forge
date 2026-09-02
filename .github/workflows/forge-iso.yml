@@ -32,31 +32,47 @@ jobs:
 
       - name: Build inside Debian 13
         run: |
+          mkdir -p build
           set +e
+          set -o pipefail
+
           docker run --rm --privileged \
             -e OOC_FORGE_SOURCE_REF="${GITHUB_SHA}" \
             -v "${PWD}:/work" \
             -w /work \
             debian:13 \
             bash -lc '
-              set -eu
+              set -euxo pipefail
               apt-get update
               DEBIAN_FRONTEND=noninteractive apt-get install -y \
                 live-build debootstrap rsync xorriso squashfs-tools \
                 grub-efi-amd64-bin grub-efi-amd64-signed \
                 mtools dosfstools git python3
               ./iso/build.sh
-            '
-          status=$?
+            ' 2>&1 | tee build/ci-live-build.log
+
+          status=${PIPESTATUS[0]}
+          set +o pipefail
           set -e
+
           if [ "$status" -ne 0 ]; then
             echo "=== OOC Forge live-build error digest ==="
-            grep -E '(^E:|^W:|ERROR|Error|Unable to locate|not found|failed|Failure|No space|permission denied|dpkg: error|apt.*error|lb .*failed)' \
-              build/iso/build.log 2>/dev/null | tail -n 40 || true
-            echo "=== OOC Forge live-build final 40 lines ==="
-            tail -n 40 build/iso/build.log 2>/dev/null || true
+            grep -Ei '(^E:|^W:|ERROR|Error|Unable|not found|cannot|failed|Failure|No space|permission denied|dpkg: error|apt.*error|dkms|nvidia|grub|lb .*failed)' \
+              build/ci-live-build.log | tail -n 100 || true
+            echo "=== OOC Forge live-build final 100 lines ==="
+            tail -n 100 build/ci-live-build.log || true
             exit "$status"
           fi
+
+      - name: Upload live-build diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ooc-forge-live-build-log-${{ github.sha }}
+          path: |
+            build/ci-live-build.log
+            build/iso/build.log
+          if-no-files-found: warn
 
       - name: Validate ISO artifacts
         run: |
