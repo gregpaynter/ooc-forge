@@ -23,5 +23,13 @@ grep -Fq 'ooc-forge-git-update.service' "$ROOT_DIR/iso/config/hooks/live/010-ooc
 grep -Fq 'ooc-forge-maintenance.sudoers' "$ROOT_DIR/iso/config/hooks/live/010-ooc-forge-runtime.hook.chroot"
 grep -Fq 'developer_git_update": True' "$ROOT_DIR/iso/build.sh"
 grep -Fq 'models_bundled": False' "$ROOT_DIR/iso/build.sh"
+grep -Fq 'sha256sum "${IMAGE_BASENAME}.iso" > "${IMAGE_BASENAME}.iso.sha256"' "$ROOT_DIR/iso/build.sh"
+grep -Fq 'cd dist' "$ROOT_DIR/.github/workflows/forge-iso.yml"
+grep -Fq 'sha256sum -c ooc-forge-*.iso.sha256' "$ROOT_DIR/.github/workflows/forge-iso.yml"
+
+if grep -Fq 'sha256sum "$ISO_OUTPUT" > "$ISO_OUTPUT.sha256"' "$ROOT_DIR/iso/build.sh"; then
+  echo "ISO checksum must not record an absolute container path." >&2
+  exit 1
+fi
 
 echo "OOC Forge ISO configuration valid."
