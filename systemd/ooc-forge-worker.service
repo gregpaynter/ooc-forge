@@ -1,0 +1,18 @@
+[Unit]
+Description=OOC Forge local job worker
+After=ooc-forge-init.service comfyui.service
+Requires=ooc-forge-init.service
+Wants=comfyui.service
+
+[Service]
+Type=simple
+User=forge
+Group=forge
+EnvironmentFile=-/etc/ooc-forge/forge.env
+WorkingDirectory=/opt/ooc-forge
+ExecStart=/opt/ooc-forge/.venv/bin/ooc-forge-worker
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,16 @@
+[Unit]
+Description=ComfyUI runtime for OOC Forge
+After=local-fs.target
+
+[Service]
+Type=simple
+User=forge
+Group=forge
+EnvironmentFile=-/etc/ooc-forge/forge.env
+WorkingDirectory=/opt/ComfyUI
+ExecStart=/opt/ComfyUI/.venv/bin/python /opt/ComfyUI/main.py --listen 127.0.0.1 --port 8188 --input-directory /forge-data/comfyui-input --output-directory /forge-data/comfyui-output
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

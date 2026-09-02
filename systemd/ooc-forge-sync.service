@@ -1,0 +1,18 @@
+[Unit]
+Description=OOC Forge outbound OOC System connector
+After=network-online.target ooc-forge-init.service
+Wants=network-online.target
+Requires=ooc-forge-init.service
+
+[Service]
+Type=simple
+User=forge
+Group=forge
+EnvironmentFile=-/etc/ooc-forge/forge.env
+WorkingDirectory=/opt/ooc-forge
+ExecStart=/opt/ooc-forge/.venv/bin/ooc-forge-sync
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

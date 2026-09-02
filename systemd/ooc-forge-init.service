@@ -1,0 +1,16 @@
+[Unit]
+Description=Initialise OOC Forge persistent data
+After=local-fs.target
+Before=ooc-forge-web.service ooc-forge-worker.service ooc-forge-sync.service
+
+[Service]
+Type=oneshot
+User=forge
+Group=forge
+EnvironmentFile=-/etc/ooc-forge/forge.env
+WorkingDirectory=/opt/ooc-forge
+ExecStart=/opt/ooc-forge/.venv/bin/ooc-forge init
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

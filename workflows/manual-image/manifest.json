@@ -1,0 +1,13 @@
+{
+  "id": "manual-image",
+  "version": "1",
+  "output_kind": "image",
+  "bindings": [
+    {"source": "prompt", "node": "6", "input": "text"},
+    {"source": "negative_prompt", "node": "7", "input": "text", "default": ""},
+    {"source": "width", "node": "5", "input": "width", "default": 1024},
+    {"source": "height", "node": "5", "input": "height", "default": 1024},
+    {"source": "steps", "node": "3", "input": "steps", "default": 24},
+    {"source": "seed", "node": "3", "input": "seed", "default": 1}
+  ]
+}
