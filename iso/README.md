@@ -21,11 +21,11 @@ This slice establishes a bootable appliance base and reproducible packaging boun
 
 ## Build host
 
-Use Debian 13 with `live-build`, `debootstrap`, `rsync`, `xorriso`, `squashfs-tools` and GRUB EFI image tools installed.
+Use Debian 13 with `live-build`, `debootstrap`, `rsync`, `xorriso`, `squashfs-tools` and the GRUB EFI builder packages installed. `grub-efi-amd64-signed` is required by Debian live-build's EFI image assembly even though OOC Forge v1 deliberately leaves Secure Boot disabled.
 
 ```bash
 sudo apt-get update
-sudo apt-get install -y live-build debootstrap rsync xorriso squashfs-tools grub-efi-amd64-bin
+sudo apt-get install -y live-build debootstrap rsync xorriso squashfs-tools grub-efi-amd64-bin grub-efi-amd64-signed
 sudo ./iso/build.sh
 ```
 
