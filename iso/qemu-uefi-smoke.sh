@@ -39,8 +39,12 @@ RUN_DIR=$(mktemp -d)
 SERIAL_LOG="$RUN_DIR/serial.log"
 QEMU_LOG="$RUN_DIR/qemu.log"
 OVMF_VARS_RW="$RUN_DIR/OVMF_VARS.fd"
+SERIAL_REPORT="${ISO_PATH}.qemu-serial.log"
+QEMU_REPORT="${ISO_PATH}.qemu.log"
 cp "$OVMF_VARS" "$OVMF_VARS_RW"
 chmod u+w "$OVMF_VARS_RW"
+: > "$SERIAL_LOG"
+: > "$QEMU_LOG"
 
 QEMU_PID=
 cleanup() {
@@ -48,6 +52,8 @@ cleanup() {
     kill "$QEMU_PID" 2>/dev/null || true
     wait "$QEMU_PID" 2>/dev/null || true
   fi
+  cp -f "$SERIAL_LOG" "$SERIAL_REPORT" 2>/dev/null || true
+  cp -f "$QEMU_LOG" "$QEMU_REPORT" 2>/dev/null || true
   rm -rf "$RUN_DIR"
 }
 trap cleanup EXIT
@@ -68,13 +74,23 @@ qemu-system-x86_64 \
   >"$QEMU_LOG" 2>&1 &
 QEMU_PID=$!
 
+GRUB_REPORTED=0
 for _ in $(seq 1 240); do
+  if [[ "$GRUB_REPORTED" -eq 0 ]] && grep -Fq 'OOC_FORGE_GRUB_READY' "$SERIAL_LOG" 2>/dev/null; then
+    echo "OOC Forge GRUB reached over UEFI USB."
+    GRUB_REPORTED=1
+  fi
   if grep -Fq 'OOC_FORGE_UEFI_BOOT_OK' "$SERIAL_LOG" 2>/dev/null; then
     echo "OOC Forge UEFI USB boot smoke test passed."
     exit 0
   fi
   if ! kill -0 "$QEMU_PID" 2>/dev/null; then
-    echo "QEMU exited before the boot marker was emitted." >&2
+    echo "QEMU exited before the userspace boot marker was emitted." >&2
+    if grep -Fq 'OOC_FORGE_GRUB_READY' "$SERIAL_LOG" 2>/dev/null; then
+      echo "GRUB was reached; failure occurred after GRUB started." >&2
+    else
+      echo "GRUB serial readiness marker was not observed." >&2
+    fi
     sed -n '1,240p' "$QEMU_LOG" >&2
     sed -n '1,240p' "$SERIAL_LOG" >&2
     exit 1
@@ -82,7 +98,12 @@ for _ in $(seq 1 240); do
   sleep 1
 done
 
-echo "Timed out waiting for OOC Forge UEFI boot marker." >&2
+echo "Timed out waiting for OOC Forge UEFI userspace boot marker." >&2
+if grep -Fq 'OOC_FORGE_GRUB_READY' "$SERIAL_LOG" 2>/dev/null; then
+  echo "GRUB was reached; investigate kernel/initramfs/userspace output below." >&2
+else
+  echo "GRUB serial readiness marker was not observed; investigate the EFI-to-GRUB path." >&2
+fi
 sed -n '1,240p' "$QEMU_LOG" >&2
-sed -n '1,240p' "$SERIAL_LOG" >&2
+sed -n '1,320p' "$SERIAL_LOG" >&2
 exit 1
