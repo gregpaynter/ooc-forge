@@ -51,12 +51,14 @@ systemctl enable ooc-forge-sync.service
 
 # This marker makes the ISO's UEFI boot test observable over a serial console.
 # It only runs on the live image, whose kernel command line carries the matching
-# flag; an installed appliance does not emit the marker.
+# flag; an installed appliance does not emit the marker. Being WantedBy the
+# multi-user target is sufficient; ordering it After the same target creates an
+# avoidable target/service ordering cycle.
 cat > /etc/systemd/system/ooc-forge-boot-smoke.service <<'UNIT'
 [Unit]
 Description=Signal that the OOC Forge live image reached multi-user boot
 ConditionKernelCommandLine=ooc-forge.boot-smoke=1
-After=multi-user.target
+After=local-fs.target
 
 [Service]
 Type=oneshot
