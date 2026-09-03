@@ -34,6 +34,19 @@ rm -rf "$WORK_DIR"
 mkdir -p "$WORK_DIR" "$DIST_DIR"
 cp -a "$ISO_DIR/auto" "$WORK_DIR/auto"
 cp -a "$ISO_DIR/config" "$WORK_DIR/config"
+
+# Debian live-build's GRUB menu references this font from the binary medium.
+# Stage the distro-provided asset explicitly so UEFI boot cannot depend on an
+# incidental live-build/package combination placing it there for us.
+GRUB_FONT_SOURCE=/usr/share/grub/unicode.pf2
+if [[ ! -r "$GRUB_FONT_SOURCE" ]]; then
+  echo "GRUB Unicode font not found at $GRUB_FONT_SOURCE; install grub-common." >&2
+  exit 1
+fi
+mkdir -p "$WORK_DIR/config/includes.binary/boot/grub/fonts"
+cp -L "$GRUB_FONT_SOURCE" \
+  "$WORK_DIR/config/includes.binary/boot/grub/fonts/unicode.pf2"
+
 mkdir -p "$WORK_DIR/config/includes.chroot/etc/ooc-forge"
 
 mkdir -p "$WORK_DIR/config/includes.chroot/opt/ooc-forge"
