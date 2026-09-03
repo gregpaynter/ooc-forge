@@ -86,9 +86,22 @@ jobs:
           )
           python -m json.tool dist/ooc-forge-*.iso.manifest.json >/dev/null
           bash ./iso/inspect-boot.sh dist/ooc-forge-*.iso
+          bash ./iso/inspect-grub.sh dist/ooc-forge-*.iso
 
       - name: Boot ISO as UEFI USB mass storage
         run: bash ./iso/qemu-uefi-smoke.sh dist/ooc-forge-*.iso
+
+      - name: Upload boot diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ooc-forge-boot-diagnostics-${{ github.sha }}
+          path: |
+            dist/ooc-forge-*.iso.boot-report.txt
+            dist/ooc-forge-*.iso.grub-report.txt
+            dist/ooc-forge-*.iso.qemu.log
+            dist/ooc-forge-*.iso.qemu-serial.log
+          if-no-files-found: warn
 
       - uses: actions/upload-artifact@v4
         with:
@@ -98,4 +111,5 @@ jobs:
             dist/ooc-forge-*.iso.sha256
             dist/ooc-forge-*.iso.manifest.json
             dist/ooc-forge-*.iso.boot-report.txt
+            dist/ooc-forge-*.iso.grub-report.txt
           if-no-files-found: error
