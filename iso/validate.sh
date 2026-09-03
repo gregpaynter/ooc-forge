@@ -25,7 +25,7 @@ grep -Fq 'ooc-forge-git-update.service' "$ROOT_DIR/iso/config/hooks/live/010-ooc
 grep -Fq 'ooc-forge-maintenance.sudoers' "$ROOT_DIR/iso/config/hooks/live/010-ooc-forge-runtime.hook.chroot"
 grep -Fq 'developer_git_update": True' "$ROOT_DIR/iso/build.sh"
 grep -Fq 'models_bundled": False' "$ROOT_DIR/iso/build.sh"
-grep -Fq '"$ISO_DIR/inspect-boot.sh" "$ISO_OUTPUT"' "$ROOT_DIR/iso/build.sh"
+grep -Fq 'bash "$ISO_DIR/inspect-boot.sh" "$ISO_OUTPUT"' "$ROOT_DIR/iso/build.sh"
 grep -Fq 'OOC_FORGE_UEFI_BOOT_OK' "$ROOT_DIR/iso/config/hooks/live/010-ooc-forge-runtime.hook.chroot"
 grep -Fq 'usb-storage' "$ROOT_DIR/iso/qemu-uefi-smoke.sh"
 grep -Fq 'sha256sum "${IMAGE_BASENAME}.iso" > "${IMAGE_BASENAME}.iso.sha256"' "$ROOT_DIR/iso/build.sh"
