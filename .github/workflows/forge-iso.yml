@@ -46,8 +46,9 @@ jobs:
               apt-get update
               DEBIAN_FRONTEND=noninteractive apt-get install -y \
                 live-build debootstrap rsync xorriso squashfs-tools \
-                grub-efi-amd64-bin grub-efi-amd64-signed \
-                mtools dosfstools git python3
+                grub-efi-amd64-bin grub-efi-amd64-signed grub-pc-bin \
+                isolinux syslinux-common syslinux-utils \
+                fdisk mtools dosfstools git python3
               ./iso/build.sh
             ' 2>&1 | tee build/ci-live-build.log
 
@@ -76,12 +77,18 @@ jobs:
 
       - name: Validate ISO artifacts
         run: |
+          sudo apt-get update
+          sudo apt-get install -y fdisk ovmf qemu-system-x86 xorriso
           test -s dist/ooc-forge-*.iso
           (
             cd dist
             sha256sum -c ooc-forge-*.iso.sha256
           )
           python -m json.tool dist/ooc-forge-*.iso.manifest.json >/dev/null
+          ./iso/inspect-boot.sh dist/ooc-forge-*.iso
+
+      - name: Boot ISO as UEFI USB mass storage
+        run: ./iso/qemu-uefi-smoke.sh dist/ooc-forge-*.iso
 
       - uses: actions/upload-artifact@v4
         with:
@@ -90,4 +97,5 @@ jobs:
             dist/ooc-forge-*.iso
             dist/ooc-forge-*.iso.sha256
             dist/ooc-forge-*.iso.manifest.json
+            dist/ooc-forge-*.iso.boot-report.txt
           if-no-files-found: error
