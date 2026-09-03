@@ -24,7 +24,9 @@ exec > >(tee "$REPORT_PATH") 2>&1
 printf '%s\n' '=== OOC Forge generated GRUB inspection ==='
 printf 'ISO: %s\n' "$ISO_PATH"
 printf '%s\n' '=== extracting /boot/grub recursively ==='
-if ! xorriso -osirrox on -indev "$ISO_PATH" -extract /boot/grub "$GRUB_TREE"; then
+if xorriso -osirrox on -indev "$ISO_PATH" -extract /boot/grub "$GRUB_TREE"; then
+  :
+else
   status=$?
   printf '%s\n' 'ERROR: xorriso could not extract /boot/grub.'
   printf '%s\n' '=== /boot directory reported by xorriso ==='
