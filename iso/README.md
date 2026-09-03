@@ -22,11 +22,11 @@ This slice establishes a bootable appliance base and reproducible packaging boun
 
 ## Build host
 
-Use Debian 13 with `live-build`, `debootstrap`, `rsync`, `xorriso`, `squashfs-tools`, Syslinux/ISOLINUX, and the GRUB BIOS and EFI builder packages installed. `grub-efi-amd64-signed` is required by Debian live-build's EFI image assembly even though OOC Forge v1 deliberately leaves Secure Boot disabled.
+Use Debian 13 with `live-build`, `debootstrap`, `rsync`, `xorriso`, `squashfs-tools`, Syslinux/ISOLINUX, and the GRUB common, BIOS and EFI builder packages installed. `grub-efi-amd64-signed` is required by Debian live-build's EFI image assembly even though OOC Forge v1 deliberately leaves Secure Boot disabled. `grub-common` supplies the canonical `unicode.pf2` font, which the build stages into `/boot/grub/fonts/unicode.pf2` on the finished ISO because the GRUB boot menu references that path.
 
 ```bash
 sudo apt-get update
-sudo apt-get install -y live-build debootstrap rsync xorriso squashfs-tools grub-efi-amd64-bin grub-efi-amd64-signed grub-pc-bin isolinux syslinux-common syslinux-utils fdisk
+sudo apt-get install -y live-build debootstrap rsync xorriso squashfs-tools grub-common grub-efi-amd64-bin grub-efi-amd64-signed grub-pc-bin isolinux syslinux-common syslinux-utils fdisk
 sudo ./iso/build.sh
 ```
 
@@ -39,7 +39,7 @@ ooc-forge-0.1.0-amd64.iso.manifest.json
 ooc-forge-0.1.0-amd64.iso.boot-report.txt
 ```
 
-The manifest records the exact source ref installed in the image and whether Developer/Maintenance Git updating is present. The build fails unless xorriso confirms hybrid MBR and GPT metadata, an EFI System Partition, and a UEFI El Torito entry. CI also presents the image to QEMU as raw USB mass storage under OVMF and requires an in-guest boot marker; an `.iso` or `.hybrid.iso` filename is never treated as evidence of USB bootability.
+The manifest records the exact source ref installed in the image and whether Developer/Maintenance Git updating is present. The build fails unless xorriso confirms hybrid MBR and GPT metadata, an EFI System Partition, a UEFI El Torito entry and the GRUB Unicode font required by the boot menu. CI also presents the image to QEMU as raw USB mass storage under OVMF and requires an in-guest boot marker; an `.iso` or `.hybrid.iso` filename is never treated as evidence of USB bootability.
 
 ## Validate without building
 
