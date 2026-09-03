@@ -49,6 +49,24 @@ systemctl enable ooc-forge-web.service
 systemctl enable ooc-forge-worker.service
 systemctl enable ooc-forge-sync.service
 
+# This marker makes the ISO's UEFI boot test observable over a serial console.
+# It only runs on the live image, whose kernel command line carries the matching
+# flag; an installed appliance does not emit the marker.
+cat > /etc/systemd/system/ooc-forge-boot-smoke.service <<'UNIT'
+[Unit]
+Description=Signal that the OOC Forge live image reached multi-user boot
+ConditionKernelCommandLine=ooc-forge.boot-smoke=1
+After=multi-user.target
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c 'printf "OOC_FORGE_UEFI_BOOT_OK\\n" > /dev/ttyS0'
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+systemctl enable ooc-forge-boot-smoke.service
+
 # The Git updater is intentionally not enabled on a timer. It is an on-demand,
 # admin-confirmed Developer/Maintenance action started by the fixed sudoers rule.
 
