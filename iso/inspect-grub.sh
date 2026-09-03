@@ -13,7 +13,17 @@ command -v xorriso >/dev/null || { echo "xorriso is required" >&2; exit 1; }
 
 REPORT_PATH="${ISO_PATH}.grub-report.txt"
 RUN_DIR=$(mktemp -d)
-trap 'rm -rf "$RUN_DIR"' EXIT
+cleanup() {
+  status=$?
+  trap - EXIT
+  # xorriso preserves ISO filesystem modes when extracting. Some GRUB paths are
+  # therefore intentionally read-only, which must not turn a successful
+  # inspection into a failed build during temporary-directory cleanup.
+  chmod -R u+w "$RUN_DIR" 2>/dev/null || true
+  rm -rf -- "$RUN_DIR" 2>/dev/null || true
+  exit "$status"
+}
+trap cleanup EXIT
 GRUB_TREE="$RUN_DIR/boot/grub"
 mkdir -p "$(dirname "$GRUB_TREE")"
 
