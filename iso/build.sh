@@ -82,6 +82,7 @@ fi
 ISO_OUTPUT="$DIST_DIR/${IMAGE_BASENAME}.iso"
 cp "$ISO_SOURCE" "$ISO_OUTPUT"
 bash "$ISO_DIR/inspect-boot.sh" "$ISO_OUTPUT" | tee "$ISO_OUTPUT.boot-report.txt"
+bash "$ISO_DIR/inspect-grub.sh" "$ISO_OUTPUT" | tee "$ISO_OUTPUT.grub-report.txt"
 (
   cd "$DIST_DIR"
   sha256sum "${IMAGE_BASENAME}.iso" > "${IMAGE_BASENAME}.iso.sha256"
@@ -129,6 +130,6 @@ iso_path.with_suffix(iso_path.suffix + ".manifest.json").write_text(
 )
 PY
 
-printf '\nBuilt OOC Forge ISO:\n  %s\n  %s\n  %s\n  %s\n' \
+printf '\nBuilt OOC Forge ISO:\n  %s\n  %s\n  %s\n  %s\n  %s\n' \
   "$ISO_OUTPUT" "$ISO_OUTPUT.sha256" "$ISO_OUTPUT.manifest.json" \
-  "$ISO_OUTPUT.boot-report.txt"
+  "$ISO_OUTPUT.boot-report.txt" "$ISO_OUTPUT.grub-report.txt"
