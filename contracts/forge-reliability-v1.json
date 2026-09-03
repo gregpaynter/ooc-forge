@@ -1,0 +1,32 @@
+{
+  "schema": "ooc.forge-reliability.v1",
+  "claim": {
+    "request": {"forge_id": "00000000-0000-0000-0000-000000000001"},
+    "response_job_required": ["id", "request", "attempt_token", "lease_until", "required_capabilities"]
+  },
+  "lease": {
+    "request_required": ["attempt_token"],
+    "response_required": ["lease_until"]
+  },
+  "asset": {
+    "multipart_required": ["forge_id", "job_id", "attempt_token", "client_asset_id", "kind", "sha256", "file"],
+    "idempotency_scope": ["job_id", "client_asset_id"],
+    "response_required": ["media_asset_id", "media_type", "storage_ref", "sha256", "mime_type"]
+  },
+  "completion": {
+    "request_required": ["attempt_token", "result", "candidate_title", "assets"],
+    "idempotency_scope": ["job_id", "attempt_token"],
+    "response_required": ["candidate_id"]
+  },
+  "local_study": {
+    "multipart_required": ["forge_id", "local_job_id", "title", "request_json", "generation_evidence_json", "assets_json", "files"],
+    "idempotency_scope": ["forge_id", "local_job_id"],
+    "response_required": ["candidate_id", "production_job_id", "replayed"]
+  },
+  "rules": {
+    "persist_claim_before_execute": true,
+    "renew_while_queued_running_or_uploading": true,
+    "all_assets_must_be_verified_before_completion": true,
+    "generation_is_not_work": true
+  }
+}
