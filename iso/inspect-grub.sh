@@ -65,11 +65,11 @@ GRUB_CFG="$GRUB_TREE/grub.cfg"
 }
 
 # The top-level entry point must remain deterministic and observable over COM1.
-grep -Eq '^set[[:space:]]+default=0$' "$GRUB_CFG" || {
+grep -Fxq 'set default=0' "$GRUB_CFG" || {
   echo 'GRUB default entry is not explicitly index 0' >&2
   exit 1
 }
-grep -Eq '^set[[:space:]]+timeout=[1-9][0-9]*$' "$GRUB_CFG" || {
+grep -Eq '^set timeout=[1-9][0-9]*$' "$GRUB_CFG" || {
   echo 'GRUB does not have a finite positive timeout' >&2
   exit 1
 }
@@ -85,6 +85,25 @@ grep -Fq 'OOC_FORGE_GRUB_READY' "$GRUB_CFG" || {
   echo 'GRUB serial readiness marker is missing' >&2
   exit 1
 }
+
+FIRST_MENU_LINE=$(grep -nEm1 '^[[:space:]]*menuentry[[:space:]]' "$GRUB_CFG" | cut -d: -f1)
+[[ -n "$FIRST_MENU_LINE" ]] || {
+  echo 'Generated /boot/grub/grub.cfg contains no menuentry' >&2
+  exit 1
+}
+DEFAULT_LINE=$(grep -nFm1 'set default=0' "$GRUB_CFG" | cut -d: -f1)
+TIMEOUT_LINE=$(grep -nEm1 '^set timeout=[1-9][0-9]*$' "$GRUB_CFG" | cut -d: -f1)
+SERIAL_LINE=$(grep -nEm1 '^serial .*--unit=0 .*--speed=115200' "$GRUB_CFG" | cut -d: -f1)
+MARKER_LINE=$(grep -nFm1 'OOC_FORGE_GRUB_READY' "$GRUB_CFG" | cut -d: -f1)
+
+for directive in "$DEFAULT_LINE" "$TIMEOUT_LINE" "$SERIAL_LINE" "$MARKER_LINE"; do
+  if (( directive >= FIRST_MENU_LINE )); then
+    echo 'GRUB control/default/serial directives must precede the first generated menuentry' >&2
+    printf 'first_menu_line=%s default_line=%s timeout_line=%s serial_line=%s marker_line=%s\n' \
+      "$FIRST_MENU_LINE" "$DEFAULT_LINE" "$TIMEOUT_LINE" "$SERIAL_LINE" "$MARKER_LINE" >&2
+    exit 1
+  fi
+done
 
 # Do not assume live-build emits a particular filename such as live.cfg. Locate
 # the actual generated menu configuration in this ISO, then validate the entry
@@ -154,6 +173,7 @@ grep -Eq '^[[:space:]]*initrd[[:space:]]+/live/' "$FIRST_ENTRY" || {
 printf '%s\n' '=== assertions ==='
 printf '%s\n' \
   'generated_grub_tree_discovered=true' \
+  'control_directives_precede_first_entry=true' \
   'default_entry=0' \
   'finite_timeout=true' \
   'grub_serial_115200=true' \
