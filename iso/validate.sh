@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+GRUB_TEMPLATE="$ROOT_DIR/iso/config/bootloaders/grub-pc/grub.cfg"
 
 bash -n \
   "$ROOT_DIR/iso/build.sh" \
@@ -37,11 +38,16 @@ grep -Fq 'bash "$ISO_DIR/inspect-grub.sh" "$ISO_OUTPUT"' "$ROOT_DIR/iso/build.sh
 grep -Fq 'OOC_FORGE_UEFI_BOOT_OK' "$ROOT_DIR/iso/config/hooks/live/010-ooc-forge-runtime.hook.chroot"
 grep -Fq 'usb-storage' "$ROOT_DIR/iso/qemu-uefi-smoke.sh"
 grep -Fq 'OOC_FORGE_GRUB_READY' "$ROOT_DIR/iso/qemu-uefi-smoke.sh"
-grep -Fq 'OOC_FORGE_GRUB_READY' "$ROOT_DIR/iso/config/bootloaders/grub-pc/grub.cfg"
-grep -Fxq 'set default=0' "$ROOT_DIR/iso/config/bootloaders/grub-pc/grub.cfg"
-grep -Eq '^set timeout=[1-9][0-9]*$' "$ROOT_DIR/iso/config/bootloaders/grub-pc/grub.cfg"
-grep -Fq 'terminal_output console serial' "$ROOT_DIR/iso/config/bootloaders/grub-pc/grub.cfg"
-grep -Fxq '@LINUX_LIVE@' "$ROOT_DIR/iso/config/bootloaders/grub-pc/grub.cfg"
+grep -Fq 'OOC_FORGE_GRUB_READY' "$GRUB_TEMPLATE"
+grep -Fxq 'set default=0' "$GRUB_TEMPLATE"
+grep -Eq '^set timeout=[1-9][0-9]*$' "$GRUB_TEMPLATE"
+grep -Fq 'terminal_output console serial' "$GRUB_TEMPLATE"
+grep -Fxq '@LINUX_LIVE@' "$GRUB_TEMPLATE"
+PLACEHOLDER_COUNT=$(grep -Fo '@LINUX_LIVE@' "$GRUB_TEMPLATE" | wc -l | tr -d '[:space:]')
+if [[ "$PLACEHOLDER_COUNT" != "1" ]]; then
+  echo "GRUB template must contain exactly one live-build injection token; found $PLACEHOLDER_COUNT." >&2
+  exit 1
+fi
 grep -Fq 'sha256sum "${IMAGE_BASENAME}.iso" > "${IMAGE_BASENAME}.iso.sha256"' "$ROOT_DIR/iso/build.sh"
 grep -Fq 'cd dist' "$ROOT_DIR/.github/workflows/forge-iso.yml"
 grep -Fq 'sha256sum -c ooc-forge-*.iso.sha256' "$ROOT_DIR/.github/workflows/forge-iso.yml"
