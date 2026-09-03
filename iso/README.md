@@ -7,7 +7,8 @@ This directory builds the OOC Forge appliance image from the canonical repositor
 The first image target is deliberately narrow:
 
 - Debian 13 (Trixie), amd64;
-- UEFI boot via GRUB EFI;
+- hybrid GPT/MBR layout for raw USB flashing;
+- an EFI System Partition and UEFI boot via GRUB EFI;
 - Secure Boot disabled;
 - Debian live environment plus Debian Installer;
 - OOC Forge runtime preinstalled under `/opt/ooc-forge`;
@@ -21,11 +22,11 @@ This slice establishes a bootable appliance base and reproducible packaging boun
 
 ## Build host
 
-Use Debian 13 with `live-build`, `debootstrap`, `rsync`, `xorriso`, `squashfs-tools` and the GRUB EFI builder packages installed. `grub-efi-amd64-signed` is required by Debian live-build's EFI image assembly even though OOC Forge v1 deliberately leaves Secure Boot disabled.
+Use Debian 13 with `live-build`, `debootstrap`, `rsync`, `xorriso`, `squashfs-tools`, Syslinux/ISOLINUX, and the GRUB BIOS and EFI builder packages installed. `grub-efi-amd64-signed` is required by Debian live-build's EFI image assembly even though OOC Forge v1 deliberately leaves Secure Boot disabled.
 
 ```bash
 sudo apt-get update
-sudo apt-get install -y live-build debootstrap rsync xorriso squashfs-tools grub-efi-amd64-bin grub-efi-amd64-signed
+sudo apt-get install -y live-build debootstrap rsync xorriso squashfs-tools grub-efi-amd64-bin grub-efi-amd64-signed grub-pc-bin isolinux syslinux-common syslinux-utils fdisk
 sudo ./iso/build.sh
 ```
 
@@ -35,9 +36,10 @@ Outputs are written to `dist/`:
 ooc-forge-0.1.0-amd64.iso
 ooc-forge-0.1.0-amd64.iso.sha256
 ooc-forge-0.1.0-amd64.iso.manifest.json
+ooc-forge-0.1.0-amd64.iso.boot-report.txt
 ```
 
-The manifest records the exact source ref installed in the image and whether Developer/Maintenance Git updating is present.
+The manifest records the exact source ref installed in the image and whether Developer/Maintenance Git updating is present. The build fails unless xorriso confirms hybrid MBR and GPT metadata, an EFI System Partition, and a UEFI El Torito entry. CI also presents the image to QEMU as raw USB mass storage under OVMF and requires an in-guest boot marker; an `.iso` or `.hybrid.iso` filename is never treated as evidence of USB bootability.
 
 ## Validate without building
 
