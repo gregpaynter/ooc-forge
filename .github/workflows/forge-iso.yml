@@ -85,10 +85,10 @@ jobs:
             sha256sum -c ooc-forge-*.iso.sha256
           )
           python -m json.tool dist/ooc-forge-*.iso.manifest.json >/dev/null
-          ./iso/inspect-boot.sh dist/ooc-forge-*.iso
+          bash ./iso/inspect-boot.sh dist/ooc-forge-*.iso
 
       - name: Boot ISO as UEFI USB mass storage
-        run: ./iso/qemu-uefi-smoke.sh dist/ooc-forge-*.iso
+        run: bash ./iso/qemu-uefi-smoke.sh dist/ooc-forge-*.iso
 
       - uses: actions/upload-artifact@v4
         with:
