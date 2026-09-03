@@ -5,14 +5,35 @@ from functools import wraps
 from typing import Any
 
 import requests
-from flask import Flask, flash, redirect, render_template, request, send_file, session, url_for
+from flask import (
+    Flask,
+    flash,
+    redirect,
+    render_template,
+    request,
+    send_file,
+    session,
+    url_for,
+)
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from forge import __version__
 from forge.config import Config
-from forge.db import create_job, get_job, init_db, list_jobs, set_setting, setting
+from forge.db import (
+    create_job,
+    get_job,
+    init_db,
+    list_jobs,
+    request_study_submission,
+    set_setting,
+    setting,
+)
 from forge.health import capabilities, report
-from forge.maintenance import git_update_status, installed_source_ref, request_git_update
+from forge.maintenance import (
+    git_update_status,
+    installed_source_ref,
+    request_git_update,
+)
 from forge.storage import (
     ensure_identity,
     ensure_layout,
@@ -55,7 +76,9 @@ def create_app() -> Flask:
             elif password != confirmation:
                 flash("Passwords do not match.")
             else:
-                set_setting(config, "admin_password_hash", generate_password_hash(password))
+                set_setting(
+                    config, "admin_password_hash", generate_password_hash(password)
+                )
                 name = request.form.get("forge_name", "").strip() or "OOC Forge"
                 update_identity(config, name=name)
                 session["admin"] = True
@@ -109,7 +132,9 @@ def create_app() -> Flask:
             if not payload["prompt"]:
                 flash("Prompt is required.")
             else:
-                job_id = create_job(config, source="LOCAL", job_type="MANUAL_IMAGE", request=payload)
+                job_id = create_job(
+                    config, source="LOCAL", job_type="MANUAL_IMAGE", request=payload
+                )
                 return redirect(url_for("job", job_id=job_id))
         return render_template("create.html")
 
@@ -126,6 +151,19 @@ def create_app() -> Flask:
             return "Job not found", 404
         result = json.loads(row["result_json"]) if row["result_json"] else None
         return render_template("job.html", job=row, result=result)
+
+    @app.post("/jobs/<job_id>/submit")
+    @login_required
+    def submit_study(job_id: str):
+        if not ensure_secrets(config).get("machine_token"):
+            flash("Pair this Forge with OOC before submitting a Study.")
+            return redirect(url_for("job", job_id=job_id))
+        try:
+            request_study_submission(config, job_id)
+            flash("Study queued for governed OOC Candidate submission.")
+        except (LookupError, ValueError) as error:
+            flash(str(error))
+        return redirect(url_for("job", job_id=job_id))
 
     @app.get("/media/<path:relative_path>")
     @login_required
@@ -202,7 +240,9 @@ def create_app() -> Flask:
             flash("Confirm that this is a Developer/Maintenance update.")
             return redirect(url_for("system"))
         digest = setting(config, "admin_password_hash")
-        if not digest or not check_password_hash(digest, request.form.get("password", "")):
+        if not digest or not check_password_hash(
+            digest, request.form.get("password", "")
+        ):
             flash("Admin password is required to start a Git maintenance update.")
             return redirect(url_for("system"))
         try:
