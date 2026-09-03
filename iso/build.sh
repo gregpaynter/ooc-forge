@@ -68,7 +68,7 @@ fi
 
 ISO_OUTPUT="$DIST_DIR/${IMAGE_BASENAME}.iso"
 cp "$ISO_SOURCE" "$ISO_OUTPUT"
-"$ISO_DIR/inspect-boot.sh" "$ISO_OUTPUT" | tee "$ISO_OUTPUT.boot-report.txt"
+bash "$ISO_DIR/inspect-boot.sh" "$ISO_OUTPUT" | tee "$ISO_OUTPUT.boot-report.txt"
 (
   cd "$DIST_DIR"
   sha256sum "${IMAGE_BASENAME}.iso" > "${IMAGE_BASENAME}.iso.sha256"
