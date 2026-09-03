@@ -1,0 +1,24 @@
+#!/bin/sh
+set -eu
+
+lb config noauto \
+  --mode debian \
+  --distribution trixie \
+  --architectures amd64 \
+  --binary-images iso-hybrid \
+  --system live \
+  --bootloaders grub-efi \
+  --uefi-secure-boot disable \
+  --archive-areas "main contrib non-free non-free-firmware" \
+  --debian-installer live \
+  --debian-installer-gui true \
+  --linux-flavours amd64 \
+  --apt-recommends true \
+  --updates true \
+  --utc-time true \
+  --iso-application "OOC Forge" \
+  --iso-publisher "OOC Melbourne" \
+  --iso-volume "OOC_FORGE" \
+  --bootappend-live "boot=live components hostname=forge locales=en_AU.UTF-8 timezone=Australia/Melbourne" \
+  --bootappend-live-failsafe "boot=live components hostname=forge nomodeset systemd.unit=rescue.target" \
+  "${@}"
