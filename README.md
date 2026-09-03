@@ -12,6 +12,9 @@ This is the first executable OOC Forge appliance slice. It is intended to be ins
 - browser-driven pairing with public OOC System
 - outbound heartbeat and ProductionJob polling
 - outbound preview upload into OOC storage before Candidate completion
+- durable remote-job inbox with attempt-scoped leases and retryable reconciliation
+- idempotent multi-asset upload and Candidate completion
+- governed local Study submission to OOC as a Candidate
 - systemd supervision for Forge web, worker, sync and ComfyUI
 - nginx LAN entry point and Avahi/mDNS discovery
 - `ooc-forge doctor` health output
@@ -68,6 +71,9 @@ After the OOC System commissioning PR is deployed:
 6. Forge claims the job, executes it locally through ComfyUI, uploads the generated preview to OOC storage, and completes the Candidate.
 7. Complete commissioning in OOC Admin.
 8. Power the Forge off and verify OOC continues normally with no dependency on `/forge-data`.
+
+The physical network-loss and reboot release gate is defined in
+[`docs/RTX3090-RELIABILITY-REHEARSAL.md`](docs/RTX3090-RELIABILITY-REHEARSAL.md).
 
 ## Service layout
 
