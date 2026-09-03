@@ -41,7 +41,7 @@ grep -Fq 'OOC_FORGE_GRUB_READY' "$ROOT_DIR/iso/config/bootloaders/grub-pc/grub.c
 grep -Fxq 'set default=0' "$ROOT_DIR/iso/config/bootloaders/grub-pc/grub.cfg"
 grep -Eq '^set timeout=[1-9][0-9]*$' "$ROOT_DIR/iso/config/bootloaders/grub-pc/grub.cfg"
 grep -Fq 'terminal_output console serial' "$ROOT_DIR/iso/config/bootloaders/grub-pc/grub.cfg"
-grep -Fq 'source /boot/grub/live.cfg' "$ROOT_DIR/iso/config/bootloaders/grub-pc/grub.cfg"
+grep -Fxq '@LINUX_LIVE@' "$ROOT_DIR/iso/config/bootloaders/grub-pc/grub.cfg"
 grep -Fq 'sha256sum "${IMAGE_BASENAME}.iso" > "${IMAGE_BASENAME}.iso.sha256"' "$ROOT_DIR/iso/build.sh"
 grep -Fq 'cd dist' "$ROOT_DIR/.github/workflows/forge-iso.yml"
 grep -Fq 'sha256sum -c ooc-forge-*.iso.sha256' "$ROOT_DIR/.github/workflows/forge-iso.yml"
