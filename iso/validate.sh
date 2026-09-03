@@ -6,6 +6,7 @@ ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 bash -n \
   "$ROOT_DIR/iso/build.sh" \
   "$ROOT_DIR/iso/inspect-boot.sh" \
+  "$ROOT_DIR/iso/inspect-grub.sh" \
   "$ROOT_DIR/iso/qemu-uefi-smoke.sh" \
   "$ROOT_DIR/iso/auto/config" \
   "$ROOT_DIR/iso/auto/build" \
@@ -16,6 +17,8 @@ grep -Fq -- '--distribution trixie' "$ROOT_DIR/iso/auto/config"
 grep -Fq -- '--architectures amd64' "$ROOT_DIR/iso/auto/config"
 grep -Fq -- '--bootloaders "syslinux,grub-efi"' "$ROOT_DIR/iso/auto/config"
 grep -Fq -- '--uefi-secure-boot disable' "$ROOT_DIR/iso/auto/config"
+grep -Fq 'console=ttyS0,115200n8' "$ROOT_DIR/iso/auto/config"
+grep -Fq 'ooc-forge.boot-smoke=1' "$ROOT_DIR/iso/auto/config"
 grep -Fq 'lb build noauto' "$ROOT_DIR/iso/auto/build"
 grep -Fq 'lb clean noauto' "$ROOT_DIR/iso/auto/clean"
 grep -Fxq 'nvidia-driver' "$ROOT_DIR/iso/config/package-lists/forge.list.chroot"
@@ -30,8 +33,15 @@ grep -Fq 'GRUB_FONT_SOURCE=/usr/share/grub/unicode.pf2' "$ROOT_DIR/iso/build.sh"
 grep -Fq 'config/includes.binary/boot/grub/fonts' "$ROOT_DIR/iso/build.sh"
 grep -Fq 'unicode.pf2' "$ROOT_DIR/iso/inspect-boot.sh"
 grep -Fq 'bash "$ISO_DIR/inspect-boot.sh" "$ISO_OUTPUT"' "$ROOT_DIR/iso/build.sh"
+grep -Fq 'bash "$ISO_DIR/inspect-grub.sh" "$ISO_OUTPUT"' "$ROOT_DIR/iso/build.sh"
 grep -Fq 'OOC_FORGE_UEFI_BOOT_OK' "$ROOT_DIR/iso/config/hooks/live/010-ooc-forge-runtime.hook.chroot"
 grep -Fq 'usb-storage' "$ROOT_DIR/iso/qemu-uefi-smoke.sh"
+grep -Fq 'OOC_FORGE_GRUB_READY' "$ROOT_DIR/iso/qemu-uefi-smoke.sh"
+grep -Fq 'OOC_FORGE_GRUB_READY' "$ROOT_DIR/iso/config/bootloaders/grub-pc/grub.cfg"
+grep -Fxq 'set default=0' "$ROOT_DIR/iso/config/bootloaders/grub-pc/grub.cfg"
+grep -Eq '^set timeout=[1-9][0-9]*$' "$ROOT_DIR/iso/config/bootloaders/grub-pc/grub.cfg"
+grep -Fq 'terminal_output console serial' "$ROOT_DIR/iso/config/bootloaders/grub-pc/grub.cfg"
+grep -Fq 'source /boot/grub/live.cfg' "$ROOT_DIR/iso/config/bootloaders/grub-pc/grub.cfg"
 grep -Fq 'sha256sum "${IMAGE_BASENAME}.iso" > "${IMAGE_BASENAME}.iso.sha256"' "$ROOT_DIR/iso/build.sh"
 grep -Fq 'cd dist' "$ROOT_DIR/.github/workflows/forge-iso.yml"
 grep -Fq 'sha256sum -c ooc-forge-*.iso.sha256' "$ROOT_DIR/.github/workflows/forge-iso.yml"
