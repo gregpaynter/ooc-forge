@@ -46,7 +46,7 @@ jobs:
               apt-get update
               DEBIAN_FRONTEND=noninteractive apt-get install -y \
                 live-build debootstrap rsync xorriso squashfs-tools \
-                grub-efi-amd64-bin grub-efi-amd64-signed grub-pc-bin \
+                grub-common grub-efi-amd64-bin grub-efi-amd64-signed grub-pc-bin \
                 isolinux syslinux-common syslinux-utils \
                 fdisk mtools dosfstools git python3
               ./iso/build.sh
