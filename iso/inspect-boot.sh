@@ -34,10 +34,14 @@ require_match() {
   fi
 }
 
-require_match 'MBR partition table|isohybrid-mbr|MBR:' "$SYSTEM_REPORT" 'hybrid MBR metadata'
-require_match 'GPT partition|GPT:' "$SYSTEM_REPORT" 'GPT metadata'
-require_match 'EFI.*(boot|system)|C12A7328-F81F-11D2-BA4B-00A0C93EC93B' "$SYSTEM_REPORT" 'EFI System Partition'
-require_match 'UEFI|Platform Id[[:space:]]+0xef|platform_id=0xef' "$EL_TORITO_REPORT" 'UEFI El Torito boot entry'
+# Debian/xorriso hybrid images deliberately overlap ISO and EFI data. Depending
+# on xorriso's representation, the FAT EFI image may be published as MBR type
+# 0xef while its GPT entry is Basic Data. Accept the concrete firmware-visible
+# evidence instead of requiring a particular human-readable GPT label.
+require_match 'System area summary:.*MBR|MBR partition table|isohybrid' "$SYSTEM_REPORT" 'hybrid MBR metadata'
+require_match 'System area summary:.*GPT|GPT disk GUID|GPT partition' "$SYSTEM_REPORT" 'GPT metadata'
+require_match 'MBR partition[[:space:]]*:.*0xef|GPT partition path[[:space:]]*:.*(/boot/grub/)?efi\.img|GPT partname local[[:space:]]*:.*EFI' "$SYSTEM_REPORT" 'firmware-visible EFI boot partition/image'
+require_match 'El Torito boot img[[:space:]]*:.*UEFI|UEFI|Platform Id[[:space:]]+0xef|platform_id=0xef' "$EL_TORITO_REPORT" 'UEFI El Torito boot entry'
 require_match 'Disklabel type:[[:space:]]+(gpt|dos)' "$FDISK_REPORT" 'readable partition table'
 
-echo "OOC Forge hybrid USB layout valid: MBR + GPT + ESP + UEFI boot entry."
+echo "OOC Forge hybrid USB layout valid: MBR + GPT + EFI boot partition/image + UEFI boot entry."
