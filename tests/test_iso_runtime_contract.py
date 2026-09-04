@@ -21,6 +21,12 @@ def parse_env(relative: str) -> dict[str, str]:
     return values
 
 
+def assert_looped_service_installed(text: str, service: str) -> None:
+    assert service in text
+    assert '"$SOURCE_DIR/systemd/$unit.service"' in text
+    assert '"/etc/systemd/system/$unit.service"' in text
+
+
 def test_execution_stack_is_pinned_for_reference_3090():
     pins = parse_env("scripts/comfyui-runtime.env")
     assert pins == {
@@ -105,11 +111,11 @@ def test_reference_image_model_is_separate_verified_and_appliance_managed():
     assert "systemctl --no-block start ooc-forge-model-install.service" in sudoers
 
     installer = read("scripts/install-local.sh")
-    assert "ooc-forge-model-install.service" in installer
+    assert_looped_service_installed(installer, "ooc-forge-model-install")
     assert "scripts/ooc-forge-model-install" in installer
 
     hook = read("iso/config/hooks/live/010-ooc-forge-runtime.hook.chroot")
-    assert "ooc-forge-model-install.service" in hook
+    assert_looped_service_installed(hook, "ooc-forge-model-install")
     assert "scripts/ooc-forge-model-install" in hook
     assert "systemctl enable ooc-forge-model-install.service" not in hook
 
@@ -139,12 +145,12 @@ def test_printable_work_pipeline_is_appliance_owned_and_model_verified():
 
     installer = read("scripts/install-local.sh")
     assert "for workflow in manual-image print-upscale" in installer
-    assert "ooc-forge-upscale-model-install.service" in installer
+    assert_looped_service_installed(installer, "ooc-forge-upscale-model-install")
     assert "scripts/ooc-forge-upscale-model-install" in installer
 
     hook = read("iso/config/hooks/live/010-ooc-forge-runtime.hook.chroot")
     assert "for workflow in manual-image print-upscale" in hook
-    assert "ooc-forge-upscale-model-install.service" in hook
+    assert_looped_service_installed(hook, "ooc-forge-upscale-model-install")
     assert "scripts/ooc-forge-upscale-model-install" in hook
     assert "systemctl enable ooc-forge-upscale-model-install.service" not in hook
 
