@@ -7,6 +7,7 @@ from typing import Any
 import requests
 
 from forge import __version__
+from forge.comfy import installed_checkpoints, installed_upscale_models
 from forge.config import Config
 
 
@@ -60,11 +61,19 @@ def report(config: Config) -> dict[str, Any]:
 
 
 def capabilities(config: Config) -> dict[str, Any]:
-    # v1 advertises what the appliance runtime can execute; installed workflows may narrow this later.
+    image_workflow_ready = (config.workflows_root / "manual-image" / "workflow.json").exists()
+    image_model_ready = bool(installed_checkpoints(config))
+    image_ready = image_workflow_ready and image_model_ready
+    thumbnail_ready = image_ready and shutil.which("ffmpeg") is not None
+    print_workflow_ready = (config.workflows_root / "print-upscale" / "workflow.json").exists()
+    print_model_ready = bool(installed_upscale_models(config))
+    print_ready = image_ready and print_workflow_ready and print_model_ready
     return {
-        "manual_create": True,
+        "manual_create": image_ready,
         "comfyui": True,
-        "image": (config.workflows_root / "manual-image" / "workflow.json").exists(),
+        "image": image_ready,
+        "web_thumbnail": thumbnail_ready,
+        "print_work": print_ready,
         "video": False,
         "audio": False,
     }

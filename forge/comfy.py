@@ -16,6 +16,104 @@ class ComfyError(RuntimeError):
     pass
 
 
+CHECKPOINT_EXTENSIONS = {".safetensors", ".ckpt", ".pt", ".pth"}
+UPSCALE_MODEL_EXTENSIONS = {".safetensors", ".pt", ".pth"}
+
+
+def _installed_models(root: Path, extensions: set[str]) -> list[str]:
+    if not root.exists():
+        return []
+    return sorted(
+        path.relative_to(root).as_posix()
+        for path in root.rglob("*")
+        if path.is_file() and path.suffix.lower() in extensions
+    )
+
+
+def installed_checkpoints(config: Config) -> list[str]:
+    return _installed_models(config.data_root / "models" / "checkpoints", CHECKPOINT_EXTENSIONS)
+
+
+def installed_upscale_models(config: Config) -> list[str]:
+    return _installed_models(config.data_root / "models" / "upscale_models", UPSCALE_MODEL_EXTENSIONS)
+
+
+def _nodes(workflow: dict[str, Any], class_type: str) -> list[dict[str, Any]]:
+    return [
+        node
+        for node in workflow.values()
+        if isinstance(node, dict) and node.get("class_type") == class_type
+    ]
+
+
+def _apply_checkpoint(config: Config, workflow: dict[str, Any], request: dict[str, Any]) -> None:
+    nodes = _nodes(workflow, "CheckpointLoaderSimple")
+    if not nodes:
+        return
+
+    installed = installed_checkpoints(config)
+    requested = str(request.get("checkpoint") or "").strip() or None
+    selected = requested or config.default_checkpoint
+
+    if selected is None:
+        configured = str(nodes[0].get("inputs", {}).get("ckpt_name") or "").strip()
+        if configured in installed:
+            selected = configured
+        elif len(installed) == 1:
+            selected = installed[0]
+
+    if selected is None:
+        raise ComfyError(
+            "No image checkpoint is installed/selected. Install a checkpoint under "
+            "/forge-data/models/checkpoints/ and select it in Manual Create, or set "
+            "FORGE_DEFAULT_CHECKPOINT."
+        )
+
+    if selected not in installed:
+        available = ", ".join(installed) if installed else "none"
+        raise ComfyError(
+            f"Image checkpoint is not installed: {selected}. "
+            f"Installed checkpoints: {available}. Models belong under "
+            "/forge-data/models/checkpoints/."
+        )
+
+    for node in nodes:
+        node.setdefault("inputs", {})["ckpt_name"] = selected
+
+
+def _apply_upscale_model(config: Config, workflow: dict[str, Any], request: dict[str, Any]) -> None:
+    nodes = _nodes(workflow, "UpscaleModelLoader")
+    if not nodes:
+        return
+
+    installed = installed_upscale_models(config)
+    requested = str(request.get("upscale_model") or "").strip() or None
+    selected = requested
+
+    if selected is None:
+        configured = str(nodes[0].get("inputs", {}).get("model_name") or "").strip()
+        if configured in installed:
+            selected = configured
+        elif len(installed) == 1:
+            selected = installed[0]
+
+    if selected is None:
+        raise ComfyError(
+            "No print upscale model is installed/selected. Install the reference print upscaler "
+            "from Models or add a compatible model under /forge-data/models/upscale_models/."
+        )
+
+    if selected not in installed:
+        available = ", ".join(installed) if installed else "none"
+        raise ComfyError(
+            f"Print upscale model is not installed: {selected}. "
+            f"Installed upscale models: {available}."
+        )
+
+    for node in nodes:
+        node.setdefault("inputs", {})["model_name"] = selected
+
+
 class ComfyClient:
     def __init__(self, config: Config):
         self.config = config
@@ -31,7 +129,14 @@ class ComfyClient:
             json={"prompt": workflow, "client_id": self.client_id},
             timeout=20,
         )
-        response.raise_for_status()
+        if not response.ok:
+            try:
+                detail = json.dumps(response.json(), sort_keys=True)
+            except ValueError:
+                detail = response.text.strip() or response.reason
+            raise ComfyError(
+                f"ComfyUI rejected the workflow (HTTP {response.status_code}): {detail}"
+            )
         payload = response.json()
         if payload.get("error"):
             raise ComfyError(json.dumps(payload["error"], sort_keys=True))
@@ -96,10 +201,8 @@ def load_workflow(config: Config, workflow_id: str, request: dict[str, Any]) -> 
             continue
         node = workflow[str(binding["node"])]
         node["inputs"][str(binding["input"])] = value
-    if config.default_checkpoint:
-        for node in workflow.values():
-            if isinstance(node, dict) and node.get("class_type") == "CheckpointLoaderSimple":
-                node.setdefault("inputs", {})["ckpt_name"] = config.default_checkpoint
+    _apply_checkpoint(config, workflow, request)
+    _apply_upscale_model(config, workflow, request)
     return workflow, manifest
 
 

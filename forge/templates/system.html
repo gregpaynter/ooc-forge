@@ -14,6 +14,19 @@
   <article class="panel"><h2>Capabilities</h2><pre>{{ capabilities|tojson(indent=2) }}</pre></article>
 </section>
 <section class="panel">
+  <p class="eyebrow">Creative defaults</p>
+  <h2>Seed Work pipeline</h2>
+  <p>These are Forge defaults. Individual derivative jobs can override supported values later.</p>
+  <form method="post" action="{{ url_for('creative_settings') }}">
+    <div class="grid">
+      <label>Studies per batch<input name="candidate_count" type="number" min="1" max="12" value="{{ creative_defaults.candidate_count }}" required></label>
+      <label>Default video duration (seconds)<input name="video_duration" type="number" min="1" max="600" value="{{ creative_defaults.video_duration }}" required></label>
+      <label>Website thumbnail max edge (px)<input name="thumbnail_max_edge" type="number" min="128" max="2048" value="{{ creative_defaults.thumbnail_max_edge }}" required></label>
+    </div>
+    <button>Save creative defaults</button>
+  </form>
+</section>
+<section class="panel">
   <p class="eyebrow">Developer / Maintenance</p>
   <h2>Update from Git</h2>
   <p>This bypasses the normal signed Forge release path. Use it only for development, testing, or supervised maintenance.</p>

@@ -1,14 +1,28 @@
 [Unit]
 Description=ComfyUI runtime for OOC Forge
-After=local-fs.target
+After=ooc-forge-init.service ooc-forge-gpu-init.service nvidia-persistenced.service
+Requires=ooc-forge-init.service ooc-forge-gpu-init.service
+Wants=nvidia-persistenced.service
 
 [Service]
 Type=simple
 User=forge
 Group=forge
 EnvironmentFile=-/etc/ooc-forge/forge.env
+Environment=XDG_CACHE_HOME=/forge-data/cache
+Environment=HF_HOME=/forge-data/cache/huggingface
+Environment=TORCH_HOME=/forge-data/cache/torch
 WorkingDirectory=/opt/ComfyUI
-ExecStart=/opt/ComfyUI/.venv/bin/python /opt/ComfyUI/main.py --listen 127.0.0.1 --port 8188 --input-directory /forge-data/comfyui-input --output-directory /forge-data/comfyui-output
+# Keep the mutable ComfyUI layout idempotent even during source maintenance
+# installs where ooc-forge-init.service may already be active/RemainAfterExit.
+ExecStartPre=/opt/ooc-forge/.venv/bin/ooc-forge init
+ExecStart=/opt/ComfyUI/.venv/bin/python /opt/ComfyUI/main.py --listen 127.0.0.1 --port 8188 --input-directory /forge-data/comfyui-input --output-directory /forge-data/comfyui-output --temp-directory /forge-data/comfyui-temp --user-directory /forge-data/comfyui-user --extra-model-paths-config /etc/ooc-forge/comfyui-model-paths.yaml
+# Type=simple alone only proves that the Python process was spawned. Keep the
+# start job in progress until the actual ComfyUI API answers, so dependent
+# services and maintenance installs observe readiness rather than a transient
+# connection-refused window.
+ExecStartPost=/usr/bin/curl --fail --silent --show-error --output /dev/null --retry 60 --retry-delay 2 --retry-connrefused --retry-max-time 120 http://127.0.0.1:8188/system_stats
+TimeoutStartSec=180
 Restart=on-failure
 RestartSec=5
 

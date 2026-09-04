@@ -15,6 +15,15 @@ DATA_DIRS = (
     "identity",
     "database",
     "models",
+    "models/checkpoints",
+    "models/loras",
+    "models/vae",
+    "models/text_encoders",
+    "models/diffusion_models",
+    "models/clip_vision",
+    "models/controlnet",
+    "models/upscale_models",
+    "models/embeddings",
     "workflows",
     "library/studies",
     "library/works",
@@ -29,6 +38,8 @@ DATA_DIRS = (
     "tmp",
     "comfyui-output",
     "comfyui-input",
+    "comfyui-temp",
+    "comfyui-user",
 )
 
 

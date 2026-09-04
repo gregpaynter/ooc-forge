@@ -1,0 +1,17 @@
+[Unit]
+Description=Install the OOC Forge print upscale model
+After=network-online.target ooc-forge-init.service
+Wants=network-online.target
+Requires=ooc-forge-init.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/ooc-forge/forge.env
+ExecStart=/usr/local/sbin/ooc-forge-upscale-model-install
+TimeoutStartSec=infinity
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=6
+
+[Install]
+WantedBy=multi-user.target

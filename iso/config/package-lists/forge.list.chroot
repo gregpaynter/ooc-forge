@@ -12,6 +12,11 @@ curl
 rsync
 jq
 git
+openssh-server
+dkms
+kmod
+build-essential
+ffmpeg
 
 # Forge runtime
 python3
@@ -42,4 +47,5 @@ usbutils
 # Certified v1 GPU family (RTX 3090 reference hardware)
 nvidia-driver
 nvidia-persistenced
+nvidia-modprobe
 firmware-misc-nonfree

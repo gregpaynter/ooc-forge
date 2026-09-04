@@ -1,8 +1,8 @@
 # OOC Forge v1 local runtime
 
-This is the first executable OOC Forge appliance slice. It is intended to be installed on the existing Debian/RTX 3090 Forge before the same known-good runtime is wrapped in the bootable ISO.
+OOC Forge is the local creative execution appliance for OOC. The canonical v1 install path is the versioned Debian ISO; the runtime remains independently installable from source for development and maintenance.
 
-## What works in this slice
+## What works
 
 - OOC-branded local browser UI at `forge.local`
 - persistent Forge identity and SQLite job state under `/forge-data`
@@ -15,15 +15,40 @@ This is the first executable OOC Forge appliance slice. It is intended to be ins
 - systemd supervision for Forge web, worker, sync and ComfyUI
 - nginx LAN entry point and Avahi/mDNS discovery
 - `ooc-forge doctor` health output
+- Developer/Maintenance Git update path, explicitly gated and never automatic
 
-## Reference host
+## Reference appliance
 
-- Debian / x86_64
+- Debian 13 / x86_64
 - NVIDIA RTX 3090 24 GB
+- NVIDIA Debian driver with Nouveau disabled
+- ComfyUI v0.34.0 pinned at commit `12d5279438bfefc058a269eae805ceab6047777f`
+- PyTorch 2.7.1 + CUDA 12.6 runtime
 - ComfyUI installed at `/opt/ComfyUI`
 - ComfyUI Python environment at `/opt/ComfyUI/.venv`
+- mutable models and ComfyUI state under `/forge-data`
 
-## Install on the current Forge
+The ISO carries the execution software but deliberately does not carry the model library. Models are persistent creative assets installed and managed separately.
+
+## Install the appliance
+
+Build or download the versioned OOC Forge ISO, flash it to USB, boot the reference machine and install Debian/OOC Forge to disk. The installed appliance is responsible for the complete base runtime: NVIDIA kernel module, ComfyUI/PyTorch, SSH maintenance service, APT sources, NetworkManager ownership, nginx and Forge systemd services.
+
+A clean RTX 3090 installation is expected to boot to:
+
+```text
+Health      Healthy
+GPU         NVIDIA GeForce RTX 3090 · 24 GB
+ComfyUI     Ready
+Storage     Persistent Forge Data
+OOC         Standalone
+```
+
+No post-install shell repair is part of the appliance contract.
+
+See `iso/README.md` for the ISO build, USB boot and validation gates.
+
+## Development install
 
 From this source directory:
 
@@ -31,13 +56,7 @@ From this source directory:
 sudo ./scripts/install-local.sh
 ```
 
-If the installed checkpoint is not named `OOC_CORE_IMAGE.safetensors`, pass the ComfyUI checkpoint filename during installation:
-
-```bash
-sudo FORGE_DEFAULT_CHECKPOINT='your-model.safetensors' ./scripts/install-local.sh
-```
-
-The installer does not install or alter the NVIDIA driver. That remains a separate appliance/ISO concern until this runtime is proven on the reference 3090.
+This remains a developer/maintenance path rather than the production appliance installation mechanism.
 
 After installation open:
 
@@ -50,24 +69,21 @@ On first access create the local admin password and name the Forge.
 ## First local proof
 
 1. Confirm `System` reports NVIDIA and ComfyUI ready.
-2. Open `Manual Create`.
-3. Enter a prompt.
-4. Generate.
+2. Install/select the OOC image model in persistent Forge Data.
+3. Open `Manual Create`.
+4. Enter a prompt and generate.
 5. Confirm the job moves `QUEUED → RUNNING → COMPLETED`.
 6. Confirm the image is retained under `/forge-data/library/studies/<job-id>/`.
 
 ## OOC commissioning proof
 
-After the OOC System commissioning PR is deployed:
-
 1. Open `forge.local → OOC System`.
-2. Start pairing with `https://ooc.melbourne`.
+2. Start pairing with the OOC System origin.
 3. Approve the displayed code at `/admin/forges`.
 4. The outbound sync service receives and stores its machine credential.
 5. Queue the commissioning test from OOC Admin.
-6. Forge claims the job, executes it locally through ComfyUI, uploads the generated preview to OOC storage, and completes the Candidate.
+6. Forge claims the job, executes it locally through ComfyUI, uploads the generated preview and completes the Candidate.
 7. Complete commissioning in OOC Admin.
-8. Power the Forge off and verify OOC continues normally with no dependency on `/forge-data`.
 
 ## Service layout
 
@@ -76,11 +92,11 @@ nginx :80
    ↓
 OOC Forge web :8080
    ├── local SQLite /forge-data/database/forge.db
-   ├── worker → ComfyUI :8188 → RTX 3090
+   ├── worker → ComfyUI 127.0.0.1:8188 → RTX 3090
    └── sync → outbound HTTPS → OOC System
 ```
 
-ComfyUI is intentionally bound to localhost, not directly exposed on the LAN.
+ComfyUI is intentionally bound to localhost, not exposed directly on the LAN.
 
 ## Persistent paths
 
@@ -99,7 +115,9 @@ ComfyUI is intentionally bound to localhost, not directly exposed on the LAN.
 ├── sync/
 ├── cache/
 ├── comfyui-input/
-└── comfyui-output/
+├── comfyui-output/
+├── comfyui-temp/
+└── comfyui-user/
 ```
 
 ## Useful commands
@@ -110,16 +128,12 @@ journalctl -u ooc-forge-worker -f
 /opt/ooc-forge/.venv/bin/ooc-forge doctor
 ```
 
-## Deliberately deferred until the local proof passes
+## Remaining v1 capability work
 
-- bootable/installable ISO image assembly
-- disk repartition/install wizard
-- Recovery partition
-- Wi-Fi setup UI/hotspot
 - model pack downloader/archiver UI
 - video + audio workflows
 - backup/restore UI
-- software update UI
+- signed/versioned production software update UI
 - kiosk session
 
-Those become packaging and capability increments around a runtime already shown to work.
+These are capability and lifecycle increments around a self-contained appliance base.

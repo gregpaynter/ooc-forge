@@ -1,0 +1,123 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+if [[ ${EUID:-$(id -u)} -ne 0 ]]; then
+  echo "Run as root." >&2
+  exit 1
+fi
+
+FORGE_USER=${FORGE_USER:-forge}
+FORGE_DATA_ROOT=${FORGE_DATA_ROOT:-/forge-data}
+MODEL_ID=realesrgan-x4plus
+MODEL_NAME="RealESRGAN x4plus"
+MODEL_FILE=RealESRGAN_x4plus.pth
+MODEL_SHA256=4fa0d38905f75ac06eb49a7951b426670021be3018265fd191d2125df9d682f1
+MODEL_URL='https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth'
+MODEL_LICENSE_URL='https://github.com/xinntao/Real-ESRGAN/blob/master/LICENSE'
+MIN_FREE_BYTES=250000000
+MODEL_DIR="$FORGE_DATA_ROOT/models/upscale_models"
+CACHE_DIR="$FORGE_DATA_ROOT/cache/model-downloads/$MODEL_ID"
+PART="$CACHE_DIR/$MODEL_FILE.part"
+TARGET="$MODEL_DIR/$MODEL_FILE"
+STATUS="$FORGE_DATA_ROOT/maintenance/upscale-model-install-status.json"
+LAST_STATE=QUEUED
+
+write_status() {
+  local state=$1
+  local message=$2
+  LAST_STATE=$state
+  install -d -o "$FORGE_USER" -g "$FORGE_USER" -m 0750 "$(dirname "$STATUS")"
+  python3 - "$STATUS" "$state" "$message" "$MODEL_ID" "$MODEL_NAME" "$MODEL_FILE" "$MODEL_SHA256" "$MODEL_LICENSE_URL" <<'PY'
+import json
+import os
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+path = Path(sys.argv[1])
+value = {
+    "state": sys.argv[2],
+    "message": sys.argv[3],
+    "model": {
+        "id": sys.argv[4],
+        "name": sys.argv[5],
+        "filename": sys.argv[6],
+        "sha256": sys.argv[7],
+        "license_url": sys.argv[8],
+    },
+    "updated_at": datetime.now(timezone.utc).isoformat(),
+}
+temporary = path.with_name(f".{path.name}.tmp")
+temporary.write_text(json.dumps(value, indent=2) + "\n", encoding="utf-8")
+os.chmod(temporary, 0o644)
+temporary.replace(path)
+PY
+  chown "$FORGE_USER:$FORGE_USER" "$STATUS"
+}
+
+on_error() {
+  local rc=$?
+  if [[ "$LAST_STATE" != "FAILED" && "$LAST_STATE" != "COMPLETED" ]]; then
+    write_status FAILED "Print upscaler installation failed. Inspect journalctl -u ooc-forge-upscale-model-install.service for details."
+  fi
+  exit "$rc"
+}
+trap on_error ERR
+
+write_status QUEUED "Preparing the OOC Forge print upscaler."
+install -d -o "$FORGE_USER" -g "$FORGE_USER" -m 0750 "$MODEL_DIR" "$CACHE_DIR"
+
+if [[ -f "$TARGET" ]]; then
+  existing_sha=$(sha256sum "$TARGET" | awk '{print $1}')
+  if [[ "$existing_sha" != "$MODEL_SHA256" ]]; then
+    write_status FAILED "An existing $MODEL_FILE has an unexpected SHA-256; refusing to replace it automatically."
+    exit 1
+  fi
+else
+  available=$(df -PB1 "$FORGE_DATA_ROOT" | awk 'NR == 2 {print $4}')
+  partial=0
+  [[ ! -f "$PART" ]] || partial=$(stat -c '%s' "$PART")
+  if (( available + partial < MIN_FREE_BYTES )); then
+    write_status FAILED "At least 250 MB of Forge Data capacity is required to install the print upscaler."
+    exit 1
+  fi
+
+  write_status DOWNLOADING "Downloading RealESRGAN x4plus (about 67 MB). The download is resumable."
+  if ! curl \
+      --fail \
+      --location \
+      --retry 5 \
+      --retry-delay 2 \
+      --retry-all-errors \
+      --continue-at - \
+      --output "$PART" \
+      "$MODEL_URL"; then
+    echo "Resumed download failed; retrying from the beginning." >&2
+    rm -f "$PART"
+    curl \
+      --fail \
+      --location \
+      --retry 5 \
+      --retry-delay 2 \
+      --retry-all-errors \
+      --output "$PART" \
+      "$MODEL_URL"
+  fi
+
+  write_status VERIFYING "Verifying the print upscaler against the pinned SHA-256."
+  actual_sha=$(sha256sum "$PART" | awk '{print $1}')
+  if [[ "$actual_sha" != "$MODEL_SHA256" ]]; then
+    rm -f "$PART"
+    write_status FAILED "Downloaded print upscaler SHA-256 did not match the pinned reference value. The file was discarded."
+    exit 1
+  fi
+
+  write_status INSTALLING "Installing the verified print upscaler into persistent Forge Data."
+  chown "$FORGE_USER:$FORGE_USER" "$PART"
+  chmod 0644 "$PART"
+  mv "$PART" "$TARGET"
+fi
+
+systemctl try-restart comfyui.service ooc-forge-worker.service >/dev/null 2>&1 || true
+write_status COMPLETED "RealESRGAN x4plus is installed and printable Work promotion is ready."
+echo "$MODEL_FILE installed successfully."

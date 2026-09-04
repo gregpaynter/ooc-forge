@@ -9,15 +9,35 @@ fi
 SOURCE_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 FORGE_USER=${FORGE_USER:-forge}
 FORGE_DATA=${FORGE_DATA:-/forge-data}
-COMFYUI_DIR=${COMFYUI_DIR:-/opt/ComfyUI}
-FORGE_DEFAULT_CHECKPOINT=${FORGE_DEFAULT_CHECKPOINT:-}
-SOURCE_REF=${OOC_FORGE_SOURCE_REF:-}
-if [[ -z "$SOURCE_REF" ]]; then
-  SOURCE_REF=$(git -C "$SOURCE_DIR" rev-parse HEAD 2>/dev/null || printf 'local\n')
+
+# Preserve the appliance's selected model across source maintenance installs.
+# An explicitly supplied FORGE_DEFAULT_CHECKPOINT still wins, including an
+# explicitly empty value when an operator intentionally wants to clear it.
+if [[ -z "${FORGE_DEFAULT_CHECKPOINT+x}" && -f /etc/ooc-forge/forge.env ]]; then
+  FORGE_DEFAULT_CHECKPOINT=$(sed -n 's/^FORGE_DEFAULT_CHECKPOINT=//p' /etc/ooc-forge/forge.env | head -n 1)
+else
+  FORGE_DEFAULT_CHECKPOINT=${FORGE_DEFAULT_CHECKPOINT:-}
+fi
+
+# A local maintenance install must report the commit actually checked out in
+# SOURCE_DIR. OOC_FORGE_SOURCE_REF remains useful for non-Git/ISO build inputs,
+# but it must never override a real Git checkout and silently produce stale
+# provenance.
+GIT_SOURCE_REF=$(git -C "$SOURCE_DIR" rev-parse HEAD 2>/dev/null || true)
+if [[ -n "$GIT_SOURCE_REF" ]]; then
+  SOURCE_REF=$GIT_SOURCE_REF
+  if [[ -n "${OOC_FORGE_SOURCE_REF:-}" && "$OOC_FORGE_SOURCE_REF" != "$GIT_SOURCE_REF" ]]; then
+    echo "Ignoring stale OOC_FORGE_SOURCE_REF=$OOC_FORGE_SOURCE_REF; local checkout is $GIT_SOURCE_REF" >&2
+  fi
+else
+  SOURCE_REF=${OOC_FORGE_SOURCE_REF:-local}
 fi
 
 apt-get update
-apt-get install -y python3 python3-venv python3-pip nginx avahi-daemon network-manager curl rsync git sudo
+apt-get install -y \
+  python3 python3-venv python3-pip \
+  nginx avahi-daemon network-manager \
+  curl rsync git sudo openssh-server build-essential ffmpeg
 
 if ! id "$FORGE_USER" >/dev/null 2>&1; then
   useradd --system --create-home --home-dir /var/lib/ooc-forge --shell /usr/sbin/nologin "$FORGE_USER"
@@ -40,34 +60,65 @@ ENV
 chmod 0640 /etc/ooc-forge/forge.env
 chown root:"$FORGE_USER" /etc/ooc-forge/forge.env
 
-install -o "$FORGE_USER" -g "$FORGE_USER" -d "$FORGE_DATA/workflows/manual-image"
-install -o "$FORGE_USER" -g "$FORGE_USER" -m 0644 "$SOURCE_DIR/workflows/manual-image/manifest.json" "$FORGE_DATA/workflows/manual-image/manifest.json"
-install -o "$FORGE_USER" -g "$FORGE_USER" -m 0644 "$SOURCE_DIR/workflows/manual-image/workflow.json" "$FORGE_DATA/workflows/manual-image/workflow.json"
+cat > /etc/ooc-forge/comfyui-model-paths.yaml <<YAML
+ooc_forge:
+  base_path: $FORGE_DATA
+  is_default: true
+  checkpoints: models/checkpoints
+  loras: models/loras
+  vae: models/vae
+  text_encoders: models/text_encoders
+  diffusion_models: models/diffusion_models
+  clip_vision: models/clip_vision
+  controlnet: models/controlnet
+  upscale_models: models/upscale_models
+  embeddings: models/embeddings
+YAML
 
-for unit in ooc-forge-init ooc-forge-web ooc-forge-worker ooc-forge-sync ooc-forge-git-update; do
+for workflow in manual-image print-upscale; do
+  install -o "$FORGE_USER" -g "$FORGE_USER" -d "$FORGE_DATA/workflows/$workflow"
+  install -o "$FORGE_USER" -g "$FORGE_USER" -m 0644 "$SOURCE_DIR/workflows/$workflow/manifest.json" "$FORGE_DATA/workflows/$workflow/manifest.json"
+  install -o "$FORGE_USER" -g "$FORGE_USER" -m 0644 "$SOURCE_DIR/workflows/$workflow/workflow.json" "$FORGE_DATA/workflows/$workflow/workflow.json"
+done
+
+# Use the exact same pinned execution payload as the appliance ISO.
+"$SOURCE_DIR/scripts/install-comfyui-runtime"
+
+for unit in ooc-forge-init ooc-forge-gpu-init ooc-forge-web ooc-forge-worker ooc-forge-sync comfyui; do
   install -m 0644 "$SOURCE_DIR/systemd/$unit.service" "/etc/systemd/system/$unit.service"
 done
+install -m 0644 "$SOURCE_DIR/systemd/ooc-forge-git-update.service" /etc/systemd/system/ooc-forge-git-update.service
+install -m 0644 "$SOURCE_DIR/systemd/ooc-forge-model-install.service" /etc/systemd/system/ooc-forge-model-install.service
+install -m 0644 "$SOURCE_DIR/systemd/ooc-forge-upscale-model-install.service" /etc/systemd/system/ooc-forge-upscale-model-install.service
 install -m 0755 "$SOURCE_DIR/scripts/ooc-forge-git-update" /usr/local/sbin/ooc-forge-git-update
+install -m 0755 "$SOURCE_DIR/scripts/ooc-forge-model-install" /usr/local/sbin/ooc-forge-model-install
+install -m 0755 "$SOURCE_DIR/scripts/ooc-forge-upscale-model-install" /usr/local/sbin/ooc-forge-upscale-model-install
+install -m 0755 "$SOURCE_DIR/scripts/ooc-forge-gpu-init" /usr/local/sbin/ooc-forge-gpu-init
 install -m 0440 "$SOURCE_DIR/systemd/ooc-forge-maintenance.sudoers" /etc/sudoers.d/ooc-forge-maintenance
 visudo -cf /etc/sudoers.d/ooc-forge-maintenance >/dev/null
-
-if [[ -f "$COMFYUI_DIR/main.py" && -x "$COMFYUI_DIR/.venv/bin/python" ]]; then
-  install -m 0644 "$SOURCE_DIR/systemd/comfyui.service" /etc/systemd/system/comfyui.service
-  systemctl enable comfyui.service
-else
-  echo "ComfyUI not found at $COMFYUI_DIR; install it before image generation." >&2
-fi
 
 rm -f /etc/nginx/sites-enabled/default
 install -m 0644 "$SOURCE_DIR/nginx/ooc-forge.conf" /etc/nginx/sites-available/ooc-forge
 ln -sfn /etc/nginx/sites-available/ooc-forge /etc/nginx/sites-enabled/ooc-forge
 hostnamectl set-hostname forge
-systemctl enable --now NetworkManager avahi-daemon nginx
+if grep -q '^127\.0\.1\.1[[:space:]]' /etc/hosts; then
+  sed -i 's/^127\.0\.1\.1.*/127.0.1.1\tforge/' /etc/hosts
+else
+  printf '127.0.1.1\tforge\n' >> /etc/hosts
+fi
+
 systemctl daemon-reload
-systemctl enable --now ooc-forge-init ooc-forge-web ooc-forge-worker ooc-forge-sync
+systemctl enable --now NetworkManager avahi-daemon nginx ssh
+systemctl enable ooc-forge-init ooc-forge-gpu-init comfyui ooc-forge-web ooc-forge-worker ooc-forge-sync
+# Restart the one-shot initialisers explicitly: source maintenance installs may
+# be replacing a previous runtime whose RemainAfterExit units are still active.
+systemctl restart ooc-forge-init
+systemctl restart ooc-forge-gpu-init
+systemctl restart comfyui ooc-forge-web ooc-forge-worker ooc-forge-sync
 
 echo
 echo "OOC Forge local runtime installed."
 echo "Open: http://forge.local/"
+echo "Install/manage image and print models from the Models page."
 echo "Developer/Maintenance Git updates are available under System."
 echo "If mDNS is unavailable, use this machine's LAN IP address."

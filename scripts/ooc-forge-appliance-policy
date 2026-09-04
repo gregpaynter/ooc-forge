@@ -1,0 +1,59 @@
+#!/bin/sh
+set -eu
+
+STATE_DIR=/var/lib/ooc-forge
+MARKER="$STATE_DIR/appliance-policy-v1"
+mkdir -p "$STATE_DIR"
+
+# SSH host keys are deliberately removed from the built image so every installed
+# appliance creates its own identity rather than inheriting keys from live-build.
+mkdir -p /etc/ssh
+ssh-keygen -A
+
+# Keep the canonical Forge hostname resolvable locally. Debian Installer can
+# regenerate /etc/hosts independently of /etc/hostname, which otherwise leaves
+# sudo and other local tools warning that host "forge" cannot be resolved.
+if grep -q '^127\.0\.1\.1[[:space:]]' /etc/hosts; then
+  sed -i 's/^127\.0\.1\.1.*/127.0.1.1\tforge/' /etc/hosts
+else
+  printf '127.0.1.1\tforge\n' >> /etc/hosts
+fi
+
+if [ -e "$MARKER" ]; then
+  exit 0
+fi
+
+backup_once() {
+  source_path=$1
+  backup_path="${source_path}.pre-ooc-forge"
+  if [ -e "$source_path" ] && [ ! -e "$backup_path" ]; then
+    cp -a "$source_path" "$backup_path"
+  fi
+}
+
+# Debian live-build/Installer can leave the installed appliance without usable
+# maintenance sources. Restore the canonical Debian 13 repositories once.
+backup_once /etc/apt/sources.list
+mkdir -p /etc/apt/sources.list.d
+rm -f /etc/apt/sources.list.d/debian.sources
+cat > /etc/apt/sources.list <<'EOF'
+deb https://deb.debian.org/debian trixie main contrib non-free non-free-firmware
+deb https://deb.debian.org/debian trixie-updates main contrib non-free non-free-firmware
+deb https://security.debian.org/debian-security trixie-security main contrib non-free non-free-firmware
+EOF
+
+# NetworkManager owns appliance networking. Debian Installer may otherwise
+# retain a static ifupdown Ethernet route that outranks Wi-Fi after the cable is
+# disconnected. Preserve that installer file once, then normalize ownership.
+backup_once /etc/network/interfaces
+mkdir -p /etc/network /etc/NetworkManager/conf.d
+cat > /etc/network/interfaces <<'EOF'
+auto lo
+iface lo inet loopback
+EOF
+cat > /etc/NetworkManager/conf.d/10-ooc-forge.conf <<'EOF'
+[ifupdown]
+managed=true
+EOF
+
+touch "$MARKER"

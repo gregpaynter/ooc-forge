@@ -1,0 +1,22 @@
+{
+  "1": {
+    "inputs": {"image": "study.png", "upload": "image"},
+    "class_type": "LoadImage",
+    "_meta": {"title": "Study"}
+  },
+  "2": {
+    "inputs": {"model_name": "RealESRGAN_x4plus.pth"},
+    "class_type": "UpscaleModelLoader",
+    "_meta": {"title": "OOC Print Upscaler"}
+  },
+  "3": {
+    "inputs": {"upscale_model": ["2", 0], "image": ["1", 0]},
+    "class_type": "ImageUpscaleWithModel",
+    "_meta": {"title": "4x AI Upscale"}
+  },
+  "4": {
+    "inputs": {"filename_prefix": "OOC-Print-Work", "images": ["3", 0]},
+    "class_type": "SaveImage",
+    "_meta": {"title": "Printable Work"}
+  }
+}

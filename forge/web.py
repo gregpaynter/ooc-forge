@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from functools import wraps
 from typing import Any
 
@@ -9,10 +10,34 @@ from flask import Flask, flash, redirect, render_template, request, send_file, s
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from forge import __version__
+from forge.comfy import installed_checkpoints, installed_upscale_models
 from forge.config import Config
-from forge.db import create_job, get_job, init_db, list_jobs, set_setting, setting
+from forge.creative import delete_job_and_files, delete_session_and_files, promote_seed_work
+from forge.db import (
+    create_creative_session,
+    create_job,
+    get_creative_session,
+    get_job,
+    init_db,
+    list_creative_sessions,
+    list_jobs,
+    list_session_jobs,
+    set_setting,
+    setting,
+    setting_int,
+)
 from forge.health import capabilities, report
 from forge.maintenance import git_update_status, installed_source_ref, request_git_update
+from forge.models import (
+    REFERENCE_IMAGE_MODEL,
+    REFERENCE_UPSCALE_MODEL,
+    model_install_running,
+    model_install_status,
+    request_reference_model_install,
+    request_reference_upscale_model_install,
+    upscale_model_install_running,
+    upscale_model_install_status,
+)
 from forge.storage import (
     ensure_identity,
     ensure_layout,
@@ -20,6 +45,16 @@ from forge.storage import (
     update_identity,
     update_secrets,
 )
+
+
+def _json(value: Any) -> dict[str, Any]:
+    if not value:
+        return {}
+    try:
+        parsed = json.loads(str(value))
+    except (TypeError, ValueError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
 
 
 def create_app() -> Flask:
@@ -87,6 +122,7 @@ def create_app() -> Flask:
             health=report(config),
             capabilities=capabilities(config),
             jobs=list_jobs(config, limit=10),
+            creative_sessions=list_creative_sessions(config, limit=6),
             version=__version__,
             ooc=ensure_secrets(config),
         )
@@ -95,23 +131,250 @@ def create_app() -> Flask:
     @app.post("/create")
     @login_required
     def create():
+        checkpoints = installed_checkpoints(config)
+        selected_checkpoint = (
+            request.form.get("checkpoint", "").strip()
+            if request.method == "POST"
+            else (config.default_checkpoint or (checkpoints[0] if len(checkpoints) == 1 else ""))
+        )
+        candidate_count = max(1, min(12, setting_int(config, "default_candidate_count", 3)))
         if request.method == "POST":
-            payload: dict[str, Any] = {
-                "title": request.form.get("title", "").strip() or "Untitled",
-                "prompt": request.form.get("prompt", "").strip(),
-                "negative_prompt": request.form.get("negative_prompt", "").strip(),
-                "workflow_id": request.form.get("workflow_id", "manual-image"),
-                "width": int(request.form.get("width") or 1024),
-                "height": int(request.form.get("height") or 1024),
-                "steps": int(request.form.get("steps") or 24),
-                "seed": int(request.form.get("seed") or -1),
-            }
-            if not payload["prompt"]:
+            title = request.form.get("title", "").strip() or "Untitled"
+            prompt = request.form.get("prompt", "").strip()
+            negative_prompt = request.form.get("negative_prompt", "").strip()
+            if not prompt:
                 flash("Prompt is required.")
+            elif not checkpoints:
+                flash("No image checkpoint is installed. Install the reference model from Models before generating.")
+            elif selected_checkpoint not in checkpoints:
+                flash("Select an installed image checkpoint.")
             else:
-                job_id = create_job(config, source="LOCAL", job_type="MANUAL_IMAGE", request=payload)
-                return redirect(url_for("job", job_id=job_id))
-        return render_template("create.html")
+                creative_session_id = create_creative_session(
+                    config,
+                    title=title,
+                    prompt=prompt,
+                    negative_prompt=negative_prompt,
+                )
+                payload: dict[str, Any] = {
+                    "kind": "candidate_batch",
+                    "title": title,
+                    "prompt": prompt,
+                    "negative_prompt": negative_prompt,
+                    "workflow_id": "manual-image",
+                    "checkpoint": selected_checkpoint,
+                    "width": int(request.form.get("width") or 1024),
+                    "height": int(request.form.get("height") or 1024),
+                    "steps": int(request.form.get("steps") or 24),
+                    "seed": -1,
+                    "candidate_count": candidate_count,
+                }
+                create_job(
+                    config,
+                    source="LOCAL",
+                    job_type="CANDIDATE_BATCH",
+                    request=payload,
+                    creative_session_id=creative_session_id,
+                    derivative_type="study_batch",
+                )
+                return redirect(url_for("creative_session", session_id=creative_session_id))
+        return render_template(
+            "create.html",
+            checkpoints=checkpoints,
+            selected_checkpoint=selected_checkpoint,
+            candidate_count=candidate_count,
+        )
+
+    @app.get("/sessions")
+    @login_required
+    def creative_sessions():
+        return render_template("sessions.html", creative_sessions=list_creative_sessions(config))
+
+    @app.get("/sessions/<session_id>")
+    @login_required
+    def creative_session(session_id: str):
+        row = get_creative_session(config, session_id)
+        if not row:
+            return "Creative session not found", 404
+        jobs = list_session_jobs(config, session_id)
+        candidates: list[dict[str, Any]] = []
+        derivatives: list[dict[str, Any]] = []
+        active = False
+        for job_row in jobs:
+            active = active or str(job_row["status"]) in {"QUEUED", "RUNNING"}
+            result = _json(job_row["result_json"])
+            entry = {"row": job_row, "result": result}
+            if str(job_row["derivative_type"] or "") == "study_batch":
+                for asset in result.get("assets") or []:
+                    if isinstance(asset, dict) and asset.get("role") == "study":
+                        candidates.append({"job": job_row, "asset": asset})
+            else:
+                derivatives.append(entry)
+        return render_template(
+            "session.html",
+            creative_session=row,
+            jobs=jobs,
+            candidates=candidates,
+            derivatives=derivatives,
+            active=active,
+            upscale_models=installed_upscale_models(config),
+            reference_upscale_model=REFERENCE_UPSCALE_MODEL,
+            default_video_duration=setting_int(config, "default_video_duration_seconds", 30),
+        )
+
+    @app.post("/sessions/<session_id>/more")
+    @login_required
+    def creative_session_more(session_id: str):
+        row = get_creative_session(config, session_id)
+        if not row:
+            return "Creative session not found", 404
+        jobs = list_session_jobs(config, session_id)
+        prior = next(
+            (job_row for job_row in reversed(jobs) if str(job_row["derivative_type"] or "") == "study_batch"),
+            None,
+        )
+        if not prior:
+            flash("No sampling job is available to extend.")
+            return redirect(url_for("creative_session", session_id=session_id))
+        payload = _json(prior["request_json"])
+        payload.update(
+            {
+                "kind": "candidate_batch",
+                "title": str(row["title"]),
+                "prompt": str(row["prompt"]),
+                "negative_prompt": str(row["negative_prompt"] or ""),
+                "seed": -1,
+                "candidate_count": max(1, min(12, setting_int(config, "default_candidate_count", 3))),
+            }
+        )
+        create_job(
+            config,
+            source="LOCAL",
+            job_type="CANDIDATE_BATCH",
+            request=payload,
+            creative_session_id=session_id,
+            parent_job_id=str(prior["id"]),
+            derivative_type="study_batch",
+        )
+        return redirect(url_for("creative_session", session_id=session_id))
+
+    @app.post("/sessions/<session_id>/seed")
+    @login_required
+    def creative_session_seed(session_id: str):
+        try:
+            promote_seed_work(
+                config,
+                session_id=session_id,
+                source_job_id=request.form.get("source_job_id", ""),
+                source_ref=request.form.get("source_ref", ""),
+                thumbnail_max_edge=max(128, min(2048, setting_int(config, "thumbnail_max_edge", 768))),
+            )
+            flash("Seed Work selected and website thumbnail created.")
+        except (RuntimeError, subprocess.SubprocessError) as error:
+            flash(str(error))
+        return redirect(url_for("creative_session", session_id=session_id))
+
+    @app.post("/sessions/<session_id>/print")
+    @login_required
+    def creative_session_print(session_id: str):
+        row = get_creative_session(config, session_id)
+        if not row or not row["seed_work_ref"]:
+            flash("Select a Seed Work before creating a printable Work.")
+            return redirect(url_for("creative_session", session_id=session_id))
+        upscale_models = installed_upscale_models(config)
+        selected = (
+            REFERENCE_UPSCALE_MODEL["filename"]
+            if REFERENCE_UPSCALE_MODEL["filename"] in upscale_models
+            else (upscale_models[0] if len(upscale_models) == 1 else "")
+        )
+        if not selected:
+            flash("Install a print upscaler from Models before creating a printable Work.")
+            return redirect(url_for("creative_session", session_id=session_id))
+        create_job(
+            config,
+            source="LOCAL",
+            job_type="PRINT_WORK",
+            request={
+                "kind": "print_from_seed",
+                "title": str(row["title"]),
+                "source_ref": str(row["seed_work_ref"]),
+                "upscale_model": selected,
+            },
+            creative_session_id=session_id,
+            parent_job_id=str(row["seed_source_job_id"] or "") or None,
+            derivative_type="print_work",
+        )
+        return redirect(url_for("creative_session", session_id=session_id))
+
+    @app.post("/sessions/<session_id>/delete")
+    @login_required
+    def creative_session_delete(session_id: str):
+        try:
+            delete_session_and_files(config, session_id)
+            flash("Creative session and Forge-owned local assets deleted.")
+            return redirect(url_for("creative_sessions"))
+        except RuntimeError as error:
+            flash(str(error))
+            return redirect(url_for("creative_session", session_id=session_id))
+
+    @app.get("/models")
+    @login_required
+    def models():
+        checkpoints = installed_checkpoints(config)
+        upscale_models = installed_upscale_models(config)
+        return render_template(
+            "models.html",
+            checkpoints=checkpoints,
+            upscale_models=upscale_models,
+            reference_model=REFERENCE_IMAGE_MODEL,
+            reference_installed=REFERENCE_IMAGE_MODEL["filename"] in checkpoints,
+            install_status=model_install_status(config),
+            install_running=model_install_running(),
+            reference_upscale_model=REFERENCE_UPSCALE_MODEL,
+            reference_upscale_installed=REFERENCE_UPSCALE_MODEL["filename"] in upscale_models,
+            upscale_install_status=upscale_model_install_status(config),
+            upscale_install_running=upscale_model_install_running(),
+            capabilities=capabilities(config),
+        )
+
+    @app.post("/models/reference/install")
+    @login_required
+    def install_reference_model():
+        if request.form.get("accept_license") != "yes":
+            flash("Acknowledge the model licence before installation.")
+            return redirect(url_for("models"))
+        digest = setting(config, "admin_password_hash")
+        if not digest or not check_password_hash(digest, request.form.get("password", "")):
+            flash("Admin password is required to install the reference image model.")
+            return redirect(url_for("models"))
+        if REFERENCE_IMAGE_MODEL["filename"] in installed_checkpoints(config):
+            flash("The reference image model is already installed.")
+            return redirect(url_for("models"))
+        try:
+            request_reference_model_install(config)
+            flash("Reference image model installation started. Refresh Models to see status.")
+        except (RuntimeError, subprocess.SubprocessError) as error:
+            flash(f"Could not start model installation: {error}")
+        return redirect(url_for("models"))
+
+    @app.post("/models/upscale/install")
+    @login_required
+    def install_reference_upscale_model():
+        if request.form.get("accept_license") != "yes":
+            flash("Acknowledge the print upscaler licence before installation.")
+            return redirect(url_for("models"))
+        digest = setting(config, "admin_password_hash")
+        if not digest or not check_password_hash(digest, request.form.get("password", "")):
+            flash("Admin password is required to install the print upscaler.")
+            return redirect(url_for("models"))
+        if REFERENCE_UPSCALE_MODEL["filename"] in installed_upscale_models(config):
+            flash("The reference print upscaler is already installed.")
+            return redirect(url_for("models"))
+        try:
+            request_reference_upscale_model_install(config)
+            flash("Print upscaler installation started. Refresh Models to see status.")
+        except (RuntimeError, subprocess.SubprocessError) as error:
+            flash(f"Could not start print upscaler installation: {error}")
+        return redirect(url_for("models"))
 
     @app.get("/jobs")
     @login_required
@@ -124,8 +387,24 @@ def create_app() -> Flask:
         row = get_job(config, job_id)
         if not row:
             return "Job not found", 404
-        result = json.loads(row["result_json"]) if row["result_json"] else None
+        result = _json(row["result_json"])
         return render_template("job.html", job=row, result=result)
+
+    @app.post("/jobs/<job_id>/delete")
+    @login_required
+    def delete_job(job_id: str):
+        row = get_job(config, job_id)
+        if not row:
+            return "Job not found", 404
+        session_id = str(row["creative_session_id"] or "")
+        try:
+            delete_job_and_files(config, job_id)
+            flash("Job and Forge-owned local job assets deleted.")
+        except RuntimeError as error:
+            flash(str(error))
+        if session_id and get_creative_session(config, session_id):
+            return redirect(url_for("creative_session", session_id=session_id))
+        return redirect(url_for("jobs"))
 
     @app.get("/media/<path:relative_path>")
     @login_required
@@ -193,7 +472,28 @@ def create_app() -> Flask:
             version=__version__,
             source_ref=installed_source_ref(),
             git_update=git_update_status(config),
+            creative_defaults={
+                "candidate_count": setting_int(config, "default_candidate_count", 3),
+                "video_duration": setting_int(config, "default_video_duration_seconds", 30),
+                "thumbnail_max_edge": setting_int(config, "thumbnail_max_edge", 768),
+            },
         )
+
+    @app.post("/system/creative-settings")
+    @login_required
+    def creative_settings():
+        try:
+            candidate_count = max(1, min(12, int(request.form.get("candidate_count") or 3)))
+            duration = max(1, min(600, int(request.form.get("video_duration") or 30)))
+            thumbnail = max(128, min(2048, int(request.form.get("thumbnail_max_edge") or 768)))
+        except ValueError:
+            flash("Creative settings must be whole numbers.")
+            return redirect(url_for("system"))
+        set_setting(config, "default_candidate_count", str(candidate_count))
+        set_setting(config, "default_video_duration_seconds", str(duration))
+        set_setting(config, "thumbnail_max_edge", str(thumbnail))
+        flash("Creative defaults updated.")
+        return redirect(url_for("system"))
 
     @app.post("/system/maintenance/git-update")
     @login_required

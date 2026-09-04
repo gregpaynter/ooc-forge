@@ -55,6 +55,45 @@ def _pair(config: Config, secrets_value: dict[str, Any]) -> dict[str, Any]:
     return ensure_secrets(config)
 
 
+def _upload_assets(
+    config: Config,
+    *,
+    origin: str,
+    headers: dict[str, str],
+    forge_id: str,
+    remote_id: str,
+    assets: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    uploaded: list[dict[str, Any]] = []
+    for asset in assets:
+        local_path = config.data_root / str(asset["relative_path"])
+        with local_path.open("rb") as handle:
+            response = requests.post(
+                f"{origin}/api/forge/assets",
+                headers=headers,
+                data={"forge_id": forge_id, "job_id": remote_id},
+                files={
+                    "file": (
+                        local_path.name,
+                        handle,
+                        str(asset.get("mime_type") or "application/octet-stream"),
+                    )
+                },
+                timeout=120,
+            )
+        response.raise_for_status()
+        preview = response.json()
+        if not isinstance(preview, dict):
+            raise RuntimeError("OOC asset upload returned non-object JSON")
+        # Preserve Forge semantics alongside the OOC MediaAsset reference.
+        preview["role"] = asset.get("role")
+        preview["kind"] = asset.get("kind")
+        if asset.get("print"):
+            preview["print"] = asset["print"]
+        uploaded.append(preview)
+    return uploaded
+
+
 def _heartbeat_and_job(config: Config, secrets_value: dict[str, Any]) -> None:
     origin = str(secrets_value.get("ooc_origin") or config.ooc_origin or "").rstrip("/")
     token = str(secrets_value.get("machine_token") or "")
@@ -92,28 +131,24 @@ def _heartbeat_and_job(config: Config, secrets_value: dict[str, Any]) -> None:
         assets = result.pop("assets", []) or []
         result.pop("media_ref", None)
         if assets:
-            asset = assets[0]
-            local_path = config.data_root / str(asset["relative_path"])
-            with local_path.open("rb") as handle:
-                upload = requests.post(
-                    f"{origin}/api/forge/assets",
-                    headers=headers,
-                    data={"forge_id": identity["forge_id"], "job_id": remote_id},
-                    files={
-                        "file": (
-                            local_path.name,
-                            handle,
-                            str(asset.get("mime_type") or "application/octet-stream"),
-                        )
-                    },
-                    timeout=120,
-                )
-            upload.raise_for_status()
-            preview = upload.json()
+            uploaded = _upload_assets(
+                config,
+                origin=origin,
+                headers=headers,
+                forge_id=identity["forge_id"],
+                remote_id=remote_id,
+                assets=assets,
+            )
+            preview = uploaded[0]
             result["preview_media_asset_id"] = preview["media_asset_id"]
             result["preview_ref"] = preview["storage_ref"]
             result["preview_sha256"] = preview["sha256"]
-            result["assets"] = [preview]
+            result["assets"] = uploaded
+            print_asset = next((asset for asset in uploaded if asset.get("role") == "print_master"), None)
+            if print_asset:
+                result["print_media_asset_id"] = print_asset["media_asset_id"]
+                result["print_storage_ref"] = print_asset["storage_ref"]
+                result["print_sha256"] = print_asset["sha256"]
         _request(
             "POST",
             f"{origin}/api/forge/jobs/{remote_id}/complete",

@@ -18,6 +18,23 @@ CREATE TABLE IF NOT EXISTS settings (
     value TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS creative_sessions (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    prompt TEXT NOT NULL,
+    negative_prompt TEXT,
+    status TEXT NOT NULL DEFAULT 'SAMPLING',
+    seed_source_job_id TEXT,
+    seed_source_ref TEXT,
+    seed_work_ref TEXT,
+    seed_work_sha256 TEXT,
+    thumbnail_ref TEXT,
+    thumbnail_sha256 TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_creative_sessions_updated ON creative_sessions(updated_at);
+
 CREATE TABLE IF NOT EXISTS jobs (
     id TEXT PRIMARY KEY,
     source TEXT NOT NULL,
@@ -27,6 +44,9 @@ CREATE TABLE IF NOT EXISTS jobs (
     result_json TEXT,
     error TEXT,
     remote_job_id TEXT,
+    creative_session_id TEXT,
+    parent_job_id TEXT,
+    derivative_type TEXT,
     created_at TEXT NOT NULL,
     started_at TEXT,
     completed_at TEXT
@@ -47,6 +67,17 @@ CREATE TABLE IF NOT EXISTS assets (
 CREATE INDEX IF NOT EXISTS ix_assets_job ON assets(job_id, created_at);
 """
 
+JOB_COLUMNS = {
+    "creative_session_id": "TEXT",
+    "parent_job_id": "TEXT",
+    "derivative_type": "TEXT",
+}
+
+SESSION_COLUMNS = {
+    "seed_work_sha256": "TEXT",
+    "thumbnail_sha256": "TEXT",
+}
+
 
 def utc_now() -> str:
     return datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
@@ -62,6 +93,24 @@ def connect(config: Config) -> sqlite3.Connection:
 def init_db(config: Config) -> None:
     with connect(config) as connection:
         connection.executescript(SCHEMA)
+        job_existing = {
+            str(row["name"])
+            for row in connection.execute("PRAGMA table_info(jobs)").fetchall()
+        }
+        for name, sql_type in JOB_COLUMNS.items():
+            if name not in job_existing:
+                connection.execute(f"ALTER TABLE jobs ADD COLUMN {name} {sql_type}")
+        session_existing = {
+            str(row["name"])
+            for row in connection.execute("PRAGMA table_info(creative_sessions)").fetchall()
+        }
+        for name, sql_type in SESSION_COLUMNS.items():
+            if name not in session_existing:
+                connection.execute(f"ALTER TABLE creative_sessions ADD COLUMN {name} {sql_type}")
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS ix_jobs_session_created "
+            "ON jobs(creative_session_id, created_at)"
+        )
 
 
 @contextmanager
@@ -84,12 +133,101 @@ def setting(config: Config, key: str) -> str | None:
     return str(row["value"]) if row else None
 
 
+def setting_int(config: Config, key: str, default: int) -> int:
+    value = setting(config, key)
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except ValueError:
+        return default
+
+
 def set_setting(config: Config, key: str, value: str) -> None:
     with transaction(config) as connection:
         connection.execute(
             "INSERT INTO settings(key, value) VALUES (?, ?) "
             "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
             (key, value),
+        )
+
+
+def create_creative_session(
+    config: Config,
+    *,
+    title: str,
+    prompt: str,
+    negative_prompt: str = "",
+) -> str:
+    session_id = str(uuid4())
+    now = utc_now()
+    with transaction(config) as connection:
+        connection.execute(
+            """
+            INSERT INTO creative_sessions(
+                id, title, prompt, negative_prompt, status, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, 'SAMPLING', ?, ?)
+            """,
+            (session_id, title, prompt, negative_prompt or None, now, now),
+        )
+    return session_id
+
+
+def get_creative_session(config: Config, session_id: str) -> sqlite3.Row | None:
+    with connect(config) as connection:
+        return connection.execute(
+            "SELECT * FROM creative_sessions WHERE id=?", (session_id,)
+        ).fetchone()
+
+
+def list_creative_sessions(config: Config, *, limit: int = 100) -> list[sqlite3.Row]:
+    with connect(config) as connection:
+        return list(
+            connection.execute(
+                "SELECT * FROM creative_sessions ORDER BY updated_at DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        )
+
+
+def set_session_seed(
+    config: Config,
+    session_id: str,
+    *,
+    source_job_id: str,
+    source_ref: str,
+    seed_work_ref: str,
+    seed_work_sha256: str,
+    thumbnail_ref: str,
+    thumbnail_sha256: str,
+) -> None:
+    with transaction(config) as connection:
+        connection.execute(
+            """
+            UPDATE creative_sessions
+            SET status='SEED_READY', seed_source_job_id=?, seed_source_ref=?,
+                seed_work_ref=?, seed_work_sha256=?, thumbnail_ref=?, thumbnail_sha256=?,
+                updated_at=?
+            WHERE id=?
+            """,
+            (
+                source_job_id,
+                source_ref,
+                seed_work_ref,
+                seed_work_sha256,
+                thumbnail_ref,
+                thumbnail_sha256,
+                utc_now(),
+                session_id,
+            ),
+        )
+
+
+def touch_creative_session(config: Config, session_id: str) -> None:
+    with transaction(config) as connection:
+        connection.execute(
+            "UPDATE creative_sessions SET updated_at=? WHERE id=?",
+            (utc_now(), session_id),
         )
 
 
@@ -100,16 +238,36 @@ def create_job(
     job_type: str,
     request: dict[str, Any],
     remote_job_id: str | None = None,
+    creative_session_id: str | None = None,
+    parent_job_id: str | None = None,
+    derivative_type: str | None = None,
 ) -> str:
     job_id = str(uuid4())
     with transaction(config) as connection:
         connection.execute(
             """
-            INSERT INTO jobs(id, source, job_type, status, request_json, remote_job_id, created_at)
-            VALUES (?, ?, ?, 'QUEUED', ?, ?, ?)
+            INSERT INTO jobs(
+                id, source, job_type, status, request_json, remote_job_id,
+                creative_session_id, parent_job_id, derivative_type, created_at
+            ) VALUES (?, ?, ?, 'QUEUED', ?, ?, ?, ?, ?, ?)
             """,
-            (job_id, source, job_type, json.dumps(request, sort_keys=True), remote_job_id, utc_now()),
+            (
+                job_id,
+                source,
+                job_type,
+                json.dumps(request, sort_keys=True),
+                remote_job_id,
+                creative_session_id,
+                parent_job_id,
+                derivative_type,
+                utc_now(),
+            ),
         )
+        if creative_session_id:
+            connection.execute(
+                "UPDATE creative_sessions SET updated_at=? WHERE id=?",
+                (utc_now(), creative_session_id),
+            )
     return job_id
 
 
@@ -118,6 +276,16 @@ def list_jobs(config: Config, *, limit: int = 100) -> list[sqlite3.Row]:
         return list(
             connection.execute(
                 "SELECT * FROM jobs ORDER BY created_at DESC LIMIT ?", (limit,)
+            ).fetchall()
+        )
+
+
+def list_session_jobs(config: Config, session_id: str) -> list[sqlite3.Row]:
+    with connect(config) as connection:
+        return list(
+            connection.execute(
+                "SELECT * FROM jobs WHERE creative_session_id=? ORDER BY created_at",
+                (session_id,),
             ).fetchall()
         )
 
@@ -143,6 +311,9 @@ def claim_local_job(config: Config) -> sqlite3.Row | None:
 
 def finish_job(config: Config, job_id: str, result: dict[str, Any]) -> None:
     with transaction(config) as connection:
+        row = connection.execute(
+            "SELECT creative_session_id FROM jobs WHERE id=?", (job_id,)
+        ).fetchone()
         connection.execute(
             """
             UPDATE jobs SET status='COMPLETED', result_json=?, completed_at=?
@@ -150,11 +321,51 @@ def finish_job(config: Config, job_id: str, result: dict[str, Any]) -> None:
             """,
             (json.dumps(result, sort_keys=True), utc_now(), job_id),
         )
+        if row and row["creative_session_id"]:
+            connection.execute(
+                "UPDATE creative_sessions SET updated_at=? WHERE id=?",
+                (utc_now(), row["creative_session_id"]),
+            )
 
 
 def fail_job(config: Config, job_id: str, error: str) -> None:
     with transaction(config) as connection:
+        row = connection.execute(
+            "SELECT creative_session_id FROM jobs WHERE id=?", (job_id,)
+        ).fetchone()
         connection.execute(
             "UPDATE jobs SET status='FAILED', error=?, completed_at=? WHERE id=?",
             (error[:4000], utc_now(), job_id),
         )
+        if row and row["creative_session_id"]:
+            connection.execute(
+                "UPDATE creative_sessions SET updated_at=? WHERE id=?",
+                (utc_now(), row["creative_session_id"]),
+            )
+
+
+def delete_job_record(config: Config, job_id: str) -> None:
+    with transaction(config) as connection:
+        row = connection.execute("SELECT status FROM jobs WHERE id=?", (job_id,)).fetchone()
+        if not row:
+            return
+        if str(row["status"]) == "RUNNING":
+            raise RuntimeError("Running jobs must finish or be cancelled before deletion.")
+        connection.execute("DELETE FROM assets WHERE job_id=?", (job_id,))
+        connection.execute("DELETE FROM jobs WHERE id=?", (job_id,))
+
+
+def delete_creative_session_record(config: Config, session_id: str) -> None:
+    with transaction(config) as connection:
+        running = connection.execute(
+            "SELECT COUNT(*) AS count FROM jobs WHERE creative_session_id=? AND status='RUNNING'",
+            (session_id,),
+        ).fetchone()
+        if running and int(running["count"]) > 0:
+            raise RuntimeError("A creative session with running jobs cannot be deleted.")
+        connection.execute(
+            "DELETE FROM assets WHERE job_id IN (SELECT id FROM jobs WHERE creative_session_id=?)",
+            (session_id,),
+        )
+        connection.execute("DELETE FROM jobs WHERE creative_session_id=?", (session_id,))
+        connection.execute("DELETE FROM creative_sessions WHERE id=?", (session_id,))

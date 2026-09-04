@@ -7,7 +7,7 @@ lb config noauto \
   --architectures amd64 \
   --binary-images iso-hybrid \
   --system live \
-  --bootloaders grub-efi \
+  --bootloaders "syslinux,grub-efi" \
   --uefi-secure-boot disable \
   --archive-areas "main contrib non-free non-free-firmware" \
   --debian-installer live \
@@ -19,6 +19,6 @@ lb config noauto \
   --iso-application "OOC Forge" \
   --iso-publisher "OOC Melbourne" \
   --iso-volume "OOC_FORGE" \
-  --bootappend-live "boot=live components hostname=forge locales=en_AU.UTF-8 timezone=Australia/Melbourne" \
+  --bootappend-live "boot=live components hostname=forge locales=en_AU.UTF-8 timezone=Australia/Melbourne console=tty0 console=ttyS0,115200n8 ooc-forge.boot-smoke=1" \
   --bootappend-live-failsafe "boot=live components hostname=forge nomodeset systemd.unit=rescue.target" \
   "${@}"
