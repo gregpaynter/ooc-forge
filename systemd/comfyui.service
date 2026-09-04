@@ -17,6 +17,12 @@ WorkingDirectory=/opt/ComfyUI
 # installs where ooc-forge-init.service may already be active/RemainAfterExit.
 ExecStartPre=/opt/ooc-forge/.venv/bin/ooc-forge init
 ExecStart=/opt/ComfyUI/.venv/bin/python /opt/ComfyUI/main.py --listen 127.0.0.1 --port 8188 --input-directory /forge-data/comfyui-input --output-directory /forge-data/comfyui-output --temp-directory /forge-data/comfyui-temp --user-directory /forge-data/comfyui-user --extra-model-paths-config /etc/ooc-forge/comfyui-model-paths.yaml
+# Type=simple alone only proves that the Python process was spawned. Keep the
+# start job in progress until the actual ComfyUI API answers, so dependent
+# services and maintenance installs observe readiness rather than a transient
+# connection-refused window.
+ExecStartPost=/usr/bin/curl --fail --silent --show-error --output /dev/null --retry 60 --retry-delay 2 --retry-connrefused --retry-max-time 120 http://127.0.0.1:8188/system_stats
+TimeoutStartSec=180
 Restart=on-failure
 RestartSec=5
 
