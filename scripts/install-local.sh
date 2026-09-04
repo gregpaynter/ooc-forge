@@ -9,7 +9,15 @@ fi
 SOURCE_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 FORGE_USER=${FORGE_USER:-forge}
 FORGE_DATA=${FORGE_DATA:-/forge-data}
-FORGE_DEFAULT_CHECKPOINT=${FORGE_DEFAULT_CHECKPOINT:-}
+
+# Preserve the appliance's selected model across source maintenance installs.
+# An explicitly supplied FORGE_DEFAULT_CHECKPOINT still wins, including an
+# explicitly empty value when an operator intentionally wants to clear it.
+if [[ -z "${FORGE_DEFAULT_CHECKPOINT+x}" && -f /etc/ooc-forge/forge.env ]]; then
+  FORGE_DEFAULT_CHECKPOINT=$(sed -n 's/^FORGE_DEFAULT_CHECKPOINT=//p' /etc/ooc-forge/forge.env | head -n 1)
+else
+  FORGE_DEFAULT_CHECKPOINT=${FORGE_DEFAULT_CHECKPOINT:-}
+fi
 
 # A local maintenance install must report the commit actually checked out in
 # SOURCE_DIR. OOC_FORGE_SOURCE_REF remains useful for non-Git/ISO build inputs,
