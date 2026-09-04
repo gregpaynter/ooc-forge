@@ -59,16 +59,17 @@ YAML
 
 install -o "$FORGE_USER" -g "$FORGE_USER" -d "$FORGE_DATA/workflows/manual-image"
 install -o "$FORGE_USER" -g "$FORGE_USER" -m 0644 "$SOURCE_DIR/workflows/manual-image/manifest.json" "$FORGE_DATA/workflows/manual-image/manifest.json"
-install -o "$FORGE_USER" -g "$FORGE_USER" -m 0644 "$SOURCE_DIR/workflows/manual-image/workflow.json" "$FORGE_DATA/workflows/manual-image/workflow.json"
+install -o "$FORGE_USER"" -g "$FORGE_USER" -m 0644 "$SOURCE_DIR/workflows/manual-image/workflow.json" "$FORGE_DATA/workflows/manual-image/workflow.json"
 
 # Use the exact same pinned execution payload as the appliance ISO.
 "$SOURCE_DIR/scripts/install-comfyui-runtime"
 
-for unit in ooc-forge-init ooc-forge-web ooc-forge-worker ooc-forge-sync comfyui; do
+for unit in ooc-forge-init ooc-forge-gpu-init ooc-forge-web ooc-forge-worker ooc-forge-sync comfyui; do
   install -m 0644 "$SOURCE_DIR/systemd/$unit.service" "/etc/systemd/system/$unit.service"
 done
 install -m 0644 "$SOURCE_DIR/systemd/ooc-forge-git-update.service" /etc/systemd/system/ooc-forge-git-update.service
 install -m 0755 "$SOURCE_DIR/scripts/ooc-forge-git-update" /usr/local/sbin/ooc-forge-git-update
+install -m 0755 "$SOURCE_DIR/scripts/ooc-forge-gpu-init" /usr/local/sbin/ooc-forge-gpu-init
 install -m 0440 "$SOURCE_DIR/systemd/ooc-forge-maintenance.sudoers" /etc/sudoers.d/ooc-forge-maintenance
 visudo -cf /etc/sudoers.d/ooc-forge-maintenance >/dev/null
 
@@ -76,9 +77,20 @@ rm -f /etc/nginx/sites-enabled/default
 install -m 0644 "$SOURCE_DIR/nginx/ooc-forge.conf" /etc/nginx/sites-available/ooc-forge
 ln -sfn /etc/nginx/sites-available/ooc-forge /etc/nginx/sites-enabled/ooc-forge
 hostnamectl set-hostname forge
+if grep -q '^127\.0\.1\.1[[:space:]]' /etc/hosts; then
+  sed -i 's/^127\.0\.1\.1.*/127.0.1.1\tforge/' /etc/hosts
+else
+  printf '127.0.1.1\tforge\n' >> /etc/hosts
+fi
+
 systemctl daemon-reload
 systemctl enable --now NetworkManager avahi-daemon nginx ssh
-systemctl enable --now ooc-forge-init comfyui ooc-forge-web ooc-forge-worker ooc-forge-sync
+systemctl enable ooc-forge-init ooc-forge-gpu-init comfyui ooc-forge-web ooc-forge-worker ooc-forge-sync
+# Restart the one-shot initialisers explicitly: source maintenance installs may
+# be replacing a previous runtime whose RemainAfterExit units are still active.
+systemctl restart ooc-forge-init
+systemctl restart ooc-forge-gpu-init
+systemctl restart comfyui ooc-forge-web ooc-forge-worker ooc-forge-sync
 
 echo
 echo "OOC Forge local runtime installed."
