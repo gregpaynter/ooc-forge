@@ -24,6 +24,8 @@ def test_prompt_compiler_runtime_is_pinned_and_cpu_only():
     assert installer_path.stat().st_mode & 0o111
     installer = installer_path.read_text(encoding="utf-8")
     assert "GGML_CUDA=OFF" in installer
+    # At the pinned upstream commit tools/cli is only added when this option is ON.
+    assert "LLAMA_BUILD_SERVER=ON" in installer
     assert "--target llama-cli" in installer
     assert "/usr/local/bin/ooc-llama-cli" in installer
 
