@@ -1,2 +1,2 @@
 forge ALL=(root) NOPASSWD: /usr/bin/systemctl start ooc-forge-git-update.service
-forge ALL=(root) NOPASSWD: /usr/bin/systemctl start ooc-forge-model-install.service
+forge ALL=(root) NOPASSWD: /usr/bin/systemctl --no-block start ooc-forge-model-install.service
