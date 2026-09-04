@@ -75,9 +75,11 @@ ooc_forge:
   embeddings: models/embeddings
 YAML
 
-install -o "$FORGE_USER" -g "$FORGE_USER" -d "$FORGE_DATA/workflows/manual-image"
-install -o "$FORGE_USER" -g "$FORGE_USER" -m 0644 "$SOURCE_DIR/workflows/manual-image/manifest.json" "$FORGE_DATA/workflows/manual-image/manifest.json"
-install -o "$FORGE_USER" -g "$FORGE_USER" -m 0644 "$SOURCE_DIR/workflows/manual-image/workflow.json" "$FORGE_DATA/workflows/manual-image/workflow.json"
+for workflow in manual-image print-upscale; do
+  install -o "$FORGE_USER" -g "$FORGE_USER" -d "$FORGE_DATA/workflows/$workflow"
+  install -o "$FORGE_USER" -g "$FORGE_USER" -m 0644 "$SOURCE_DIR/workflows/$workflow/manifest.json" "$FORGE_DATA/workflows/$workflow/manifest.json"
+  install -o "$FORGE_USER" -g "$FORGE_USER" -m 0644 "$SOURCE_DIR/workflows/$workflow/workflow.json" "$FORGE_DATA/workflows/$workflow/workflow.json"
+done
 
 # Use the exact same pinned execution payload as the appliance ISO.
 "$SOURCE_DIR/scripts/install-comfyui-runtime"
@@ -87,8 +89,10 @@ for unit in ooc-forge-init ooc-forge-gpu-init ooc-forge-web ooc-forge-worker ooc
 done
 install -m 0644 "$SOURCE_DIR/systemd/ooc-forge-git-update.service" /etc/systemd/system/ooc-forge-git-update.service
 install -m 0644 "$SOURCE_DIR/systemd/ooc-forge-model-install.service" /etc/systemd/system/ooc-forge-model-install.service
+install -m 0644 "$SOURCE_DIR/systemd/ooc-forge-upscale-model-install.service" /etc/systemd/system/ooc-forge-upscale-model-install.service
 install -m 0755 "$SOURCE_DIR/scripts/ooc-forge-git-update" /usr/local/sbin/ooc-forge-git-update
 install -m 0755 "$SOURCE_DIR/scripts/ooc-forge-model-install" /usr/local/sbin/ooc-forge-model-install
+install -m 0755 "$SOURCE_DIR/scripts/ooc-forge-upscale-model-install" /usr/local/sbin/ooc-forge-upscale-model-install
 install -m 0755 "$SOURCE_DIR/scripts/ooc-forge-gpu-init" /usr/local/sbin/ooc-forge-gpu-init
 install -m 0440 "$SOURCE_DIR/systemd/ooc-forge-maintenance.sudoers" /etc/sudoers.d/ooc-forge-maintenance
 visudo -cf /etc/sudoers.d/ooc-forge-maintenance >/dev/null
@@ -115,6 +119,6 @@ systemctl restart comfyui ooc-forge-web ooc-forge-worker ooc-forge-sync
 echo
 echo "OOC Forge local runtime installed."
 echo "Open: http://forge.local/"
-echo "Install/manage the reference image model from the Models page."
+echo "Install/manage image and print models from the Models page."
 echo "Developer/Maintenance Git updates are available under System."
 echo "If mDNS is unavailable, use this machine's LAN IP address."
