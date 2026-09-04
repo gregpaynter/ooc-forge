@@ -29,20 +29,27 @@ jobs:
             scripts/forge-doctor.sh \
             scripts/install-local.sh \
             scripts/install-comfyui-runtime \
+            scripts/install-prompt-runtime \
             scripts/ooc-forge-appliance-policy \
             scripts/ooc-forge-git-update \
             scripts/ooc-forge-model-install \
-            scripts/ooc-forge-upscale-model-install
+            scripts/ooc-forge-upscale-model-install \
+            scripts/ooc-forge-prompt-model-install \
+            scripts/ooc-forge-video-model-install
           sudo visudo -cf systemd/ooc-forge-maintenance.sudoers >/dev/null
           test -s systemd/ooc-forge-git-update.service
           test -s systemd/ooc-forge-appliance-policy.service
           test -s systemd/ooc-forge-model-install.service
           test -s systemd/ooc-forge-upscale-model-install.service
+          test -s systemd/ooc-forge-prompt-model-install.service
+          test -s systemd/ooc-forge-video-model-install.service
           test -s systemd/comfyui.service
           python -m json.tool workflows/manual-image/manifest.json >/dev/null
           python -m json.tool workflows/manual-image/workflow.json >/dev/null
           python -m json.tool workflows/print-upscale/manifest.json >/dev/null
           python -m json.tool workflows/print-upscale/workflow.json >/dev/null
+          python -m json.tool workflows/video-wan22-ti2v/manifest.json >/dev/null
+          python -m json.tool workflows/video-wan22-ti2v/workflow.json >/dev/null
           python - <<'PY'
           import pathlib
           import tomllib
