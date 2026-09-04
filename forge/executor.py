@@ -159,12 +159,159 @@ def _create_print_master(
     ), print_metadata
 
 
+def _safe_library_source(config: Config, relative_path: str) -> Path:
+    source = (config.data_root / relative_path).resolve()
+    root = config.library_root.resolve()
+    if root not in source.parents or not source.exists():
+        raise RuntimeError("Seed Work source is missing or outside the Forge library boundary.")
+    return source
+
+
+def _execute_print_from_seed(
+    config: Config,
+    client: ComfyClient,
+    identity: dict[str, Any],
+    request: dict[str, Any],
+    *,
+    job_id: str,
+    timeout: int,
+) -> dict[str, Any]:
+    source_ref = str(request.get("source_ref") or "").strip()
+    if not source_ref:
+        raise RuntimeError("Printable Work derivative requires a Seed Work source_ref.")
+    source = _safe_library_source(config, source_ref)
+    print_asset, print_metadata = _create_print_master(
+        config,
+        client,
+        job_id=job_id,
+        study_path=source,
+        request=request,
+        timeout=timeout,
+    )
+    provenance = {
+        "schema": "ooc.generation-evidence.v1",
+        "executor": {
+            "agent": "ooc-forge-runtime",
+            "agent_version": __version__,
+            "forge_id": identity["forge_id"],
+            "workflow_id": PRINT_WORKFLOW_ID,
+            "comfy_prompt_id": print_metadata["comfy_prompt_id"],
+            "completed_at": utc_now(),
+        },
+        "promotion": {
+            "from": "seed_work",
+            "to": "print_work",
+            "source_ref": source_ref,
+            "output_ref": print_asset["relative_path"],
+            "upscale_model": str(request.get("upscale_model") or "RealESRGAN_x4plus.pth"),
+            "scale": print_metadata["scale"],
+            "dpi": print_metadata["dpi"],
+        },
+    }
+    return {
+        "title": str(request.get("title") or "Printable Work"),
+        "description": str(request.get("description") or "") or None,
+        "local_job_id": job_id,
+        "assets": [print_asset],
+        "media_ref": print_asset["relative_path"],
+        "print_ref": print_asset["relative_path"],
+        "print_master": print_metadata,
+        "generation_evidence": provenance,
+    }
+
+
+def _execute_candidate_batch(
+    config: Config,
+    client: ComfyClient,
+    identity: dict[str, Any],
+    request: dict[str, Any],
+    *,
+    job_id: str,
+    timeout: int,
+    workflow_id: str,
+    candidate_count: int,
+) -> dict[str, Any]:
+    destination_root = config.library_root / "studies" / job_id
+    destination_root.mkdir(parents=True, exist_ok=True)
+    assets: list[dict[str, Any]] = []
+    evidence: list[dict[str, Any]] = []
+    manifest_version = "1"
+    configured_seed = int(request.get("seed", -1) or -1)
+
+    for index in range(candidate_count):
+        seed = configured_seed + index if configured_seed >= 0 else secrets.randbits(63)
+        candidate_request = {**request, "seed": seed}
+        manifest, prompt_id, references = _run_workflow(
+            config,
+            client,
+            workflow_id,
+            candidate_request,
+            timeout=timeout,
+        )
+        manifest_version = str(manifest.get("version", "1"))
+        reference = references[0]
+        source_name = Path(str(reference["filename"])).name
+        suffix = Path(source_name).suffix or ".bin"
+        destination = destination_root / f"candidate-{index + 1:03d}{suffix}"
+        client.download(reference, destination)
+        assets.append(
+            _asset(
+                destination,
+                config,
+                kind="image",
+                role="study",
+                extra={
+                    "candidate_index": index + 1,
+                    "seed": seed,
+                    "comfy_prompt_id": prompt_id,
+                },
+            )
+        )
+        evidence.append(
+            {
+                "candidate_index": index + 1,
+                "seed": seed,
+                "comfy_prompt_id": prompt_id,
+                "output_ref": assets[-1]["relative_path"],
+            }
+        )
+
+    provenance = {
+        "schema": "ooc.generation-evidence.v1",
+        "executor": {
+            "agent": "ooc-forge-runtime",
+            "agent_version": __version__,
+            "forge_id": identity["forge_id"],
+            "workflow_id": workflow_id,
+            "completed_at": utc_now(),
+        },
+        "workflow": {"id": workflow_id, "manifest_version": manifest_version},
+        "sampling": {
+            "candidate_count": candidate_count,
+            "creative_prompt": str(request.get("prompt") or ""),
+            "candidates": evidence,
+        },
+    }
+    return {
+        "title": str(request.get("title") or "Forge Studies"),
+        "description": str(request.get("description") or "") or None,
+        "local_job_id": job_id,
+        "assets": assets,
+        "media_ref": assets[0]["relative_path"],
+        "study_ref": assets[0]["relative_path"],
+        "candidate_count": candidate_count,
+        "generation_evidence": provenance,
+    }
+
+
 def execute(request: dict[str, Any], *, local_job_id: str | None = None) -> dict[str, Any]:
     config = Config.load()
     ensure_layout(config)
     init_db(config)
     identity = ensure_identity(config)
     workflow_id = str(request.get("workflow_id") or "manual-image")
+    job_id = local_job_id or str(uuid4())
+
     if request.get("kind") == "commissioning_test":
         request = {
             **request,
@@ -174,15 +321,40 @@ def execute(request: dict[str, Any], *, local_job_id: str | None = None) -> dict
             "height": 512,
             "steps": 12,
             "create_printable_work": False,
+            "candidate_count": 1,
         }
         workflow_id = str(request.get("workflow_id") or "manual-image")
-
-    if int(request.get("seed", 0) or 0) < 0:
-        request = {**request, "seed": secrets.randbits(63)}
 
     timeout = int(request.get("timeout_seconds") or 3600)
     client = ComfyClient(config)
     client.health()
+
+    if request.get("kind") == "print_from_seed":
+        return _execute_print_from_seed(
+            config,
+            client,
+            identity,
+            request,
+            job_id=job_id,
+            timeout=timeout,
+        )
+
+    candidate_count = max(1, min(12, int(request.get("candidate_count") or 1)))
+    if candidate_count > 1 or request.get("kind") == "candidate_batch":
+        return _execute_candidate_batch(
+            config,
+            client,
+            identity,
+            request,
+            job_id=job_id,
+            timeout=timeout,
+            workflow_id=workflow_id,
+            candidate_count=candidate_count,
+        )
+
+    if int(request.get("seed", 0) or 0) < 0:
+        request = {**request, "seed": secrets.randbits(63)}
+
     manifest, prompt_id, references = _run_workflow(
         config,
         client,
@@ -191,7 +363,6 @@ def execute(request: dict[str, Any], *, local_job_id: str | None = None) -> dict
         timeout=timeout,
     )
 
-    job_id = local_job_id or str(uuid4())
     destination_root = config.library_root / "studies" / job_id
     destination_root.mkdir(parents=True, exist_ok=True)
     assets: list[dict[str, Any]] = []
@@ -208,6 +379,7 @@ def execute(request: dict[str, Any], *, local_job_id: str | None = None) -> dict
                 config,
                 kind=manifest.get("output_kind", "generated"),
                 role="study",
+                extra={"seed": request.get("seed"), "comfy_prompt_id": prompt_id},
             )
         )
 
