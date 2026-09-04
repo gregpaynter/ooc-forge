@@ -9,6 +9,7 @@ from flask import Flask, flash, redirect, render_template, request, send_file, s
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from forge import __version__
+from forge.comfy import installed_checkpoints
 from forge.config import Config
 from forge.db import create_job, get_job, init_db, list_jobs, set_setting, setting
 from forge.health import capabilities, report
@@ -95,12 +96,19 @@ def create_app() -> Flask:
     @app.post("/create")
     @login_required
     def create():
+        checkpoints = installed_checkpoints(config)
+        selected_checkpoint = (
+            request.form.get("checkpoint", "").strip()
+            if request.method == "POST"
+            else (config.default_checkpoint or (checkpoints[0] if len(checkpoints) == 1 else ""))
+        )
         if request.method == "POST":
             payload: dict[str, Any] = {
                 "title": request.form.get("title", "").strip() or "Untitled",
                 "prompt": request.form.get("prompt", "").strip(),
                 "negative_prompt": request.form.get("negative_prompt", "").strip(),
                 "workflow_id": request.form.get("workflow_id", "manual-image"),
+                "checkpoint": selected_checkpoint,
                 "width": int(request.form.get("width") or 1024),
                 "height": int(request.form.get("height") or 1024),
                 "steps": int(request.form.get("steps") or 24),
@@ -108,10 +116,18 @@ def create_app() -> Flask:
             }
             if not payload["prompt"]:
                 flash("Prompt is required.")
+            elif not checkpoints:
+                flash("No image checkpoint is installed. Add one under /forge-data/models/checkpoints/ before generating.")
+            elif selected_checkpoint not in checkpoints:
+                flash("Select an installed image checkpoint.")
             else:
                 job_id = create_job(config, source="LOCAL", job_type="MANUAL_IMAGE", request=payload)
                 return redirect(url_for("job", job_id=job_id))
-        return render_template("create.html")
+        return render_template(
+            "create.html",
+            checkpoints=checkpoints,
+            selected_checkpoint=selected_checkpoint,
+        )
 
     @app.get("/jobs")
     @login_required
