@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import secrets
 import shutil
 import subprocess
@@ -56,8 +55,6 @@ def _safe_library_source(config: Config, relative_path: str) -> Path:
 
 
 def _frames_for_duration(seconds: float, fps: int = VIDEO_FPS) -> int:
-    # Wan video latent length must be 4n+1. Round upward so each generated shot
-    # covers its planned interval; final assembly is trimmed to exact duration.
     target = max(17, int(round(seconds * fps)))
     return ((target - 1 + 3) // 4) * 4 + 1
 
@@ -124,7 +121,7 @@ def _extract_last_frame(video: Path, destination: Path) -> None:
 def _assemble_master(segments: list[Path], destination: Path, duration: float) -> None:
     concat = destination.parent / ".segments.txt"
     concat.write_text(
-        "".join(f"file '{path.as_posix().replace("'", "'\\''")}'\n" for path in segments),
+        "".join(f"file '{path.as_posix()}'\n" for path in segments),
         encoding="utf-8",
     )
     try:
@@ -175,7 +172,7 @@ def _make_mobile(master: Path, destination: Path) -> None:
             str(master),
             "-an",
             "-vf",
-            "scale='min(720,iw)':-2",
+            "scale=720:-2:force_original_aspect_ratio=decrease",
             "-c:v",
             "libx264",
             "-preset",
