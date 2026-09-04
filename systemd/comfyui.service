@@ -1,6 +1,8 @@
 [Unit]
 Description=ComfyUI runtime for OOC Forge
-After=local-fs.target
+After=ooc-forge-init.service nvidia-persistenced.service
+Requires=ooc-forge-init.service
+Wants=nvidia-persistenced.service
 
 [Service]
 Type=simple
@@ -8,7 +10,7 @@ User=forge
 Group=forge
 EnvironmentFile=-/etc/ooc-forge/forge.env
 WorkingDirectory=/opt/ComfyUI
-ExecStart=/opt/ComfyUI/.venv/bin/python /opt/ComfyUI/main.py --listen 127.0.0.1 --port 8188 --input-directory /forge-data/comfyui-input --output-directory /forge-data/comfyui-output
+ExecStart=/opt/ComfyUI/.venv/bin/python /opt/ComfyUI/main.py --listen 127.0.0.1 --port 8188 --input-directory /forge-data/comfyui-input --output-directory /forge-data/comfyui-output --temp-directory /forge-data/comfyui-temp --user-directory /forge-data/comfyui-user --extra-model-paths-config /etc/ooc-forge/comfyui-model-paths.yaml
 Restart=on-failure
 RestartSec=5
 

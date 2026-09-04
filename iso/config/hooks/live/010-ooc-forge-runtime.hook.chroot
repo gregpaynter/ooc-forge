@@ -1,6 +1,9 @@
 #!/bin/sh
 set -eu
 
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+
 FORGE_USER=forge
 FORGE_DATA=/forge-data
 SOURCE_DIR=/opt/ooc-forge
@@ -28,12 +31,64 @@ ENV
 chmod 0640 /etc/ooc-forge/forge.env
 chown root:"$FORGE_USER" /etc/ooc-forge/forge.env
 
-for unit in ooc-forge-init ooc-forge-web ooc-forge-worker ooc-forge-sync; do
+cat > /etc/ooc-forge/comfyui-model-paths.yaml <<'YAML'
+ooc_forge:
+  base_path: /forge-data
+  is_default: true
+  checkpoints: models/checkpoints
+  loras: models/loras
+  vae: models/vae
+  text_encoders: models/text_encoders
+  diffusion_models: models/diffusion_models
+  clip_vision: models/clip_vision
+  controlnet: models/controlnet
+  upscale_models: models/upscale_models
+  embeddings: models/embeddings
+YAML
+chmod 0644 /etc/ooc-forge/comfyui-model-paths.yaml
+
+for unit in \
+  ooc-forge-appliance-policy \
+  ooc-forge-init \
+  ooc-forge-web \
+  ooc-forge-worker \
+  ooc-forge-sync \
+  comfyui; do
   install -m 0644 "$SOURCE_DIR/systemd/$unit.service" "/etc/systemd/system/$unit.service"
 done
 install -m 0644 "$SOURCE_DIR/systemd/ooc-forge-git-update.service" /etc/systemd/system/ooc-forge-git-update.service
 install -m 0440 "$SOURCE_DIR/systemd/ooc-forge-maintenance.sudoers" /etc/sudoers.d/ooc-forge-maintenance
 install -m 0755 "$SOURCE_DIR/scripts/ooc-forge-git-update" /usr/local/sbin/ooc-forge-git-update
+install -m 0755 "$SOURCE_DIR/scripts/ooc-forge-appliance-policy" /usr/local/sbin/ooc-forge-appliance-policy
+
+# The RTX 3090 reference appliance uses the proprietary NVIDIA driver. Nouveau
+# claiming the GPU first leaves nvidia-smi unable to communicate with it, so the
+# conflict is resolved in the image rather than by post-install shell repair.
+install -d -m 0755 /etc/modprobe.d
+cat > /etc/modprobe.d/blacklist-nouveau.conf <<'EOF'
+blacklist nouveau
+options nouveau modeset=0
+EOF
+
+# Prove that a DKMS NVIDIA module exists for every kernel carried in the image,
+# then rebuild initramfs with the Nouveau blacklist included.
+for module_dir in /lib/modules/*; do
+  [ -d "$module_dir" ] || continue
+  kernel=$(basename "$module_dir")
+  if [ -d "/usr/src/linux-headers-$kernel" ]; then
+    dkms autoinstall -k "$kernel"
+  fi
+  depmod -a "$kernel"
+done
+if ! find /lib/modules -type f \( -name 'nvidia-current.ko*' -o -name 'nvidia.ko*' \) -print -quit | grep -q .; then
+  echo "NVIDIA DKMS module was not installed into the Forge image" >&2
+  exit 1
+fi
+update-initramfs -u -k all
+
+# Bundle the pinned ComfyUI + PyTorch CUDA runtime. Models remain separate
+# persistent Forge Data and are not baked into the base image.
+"$SOURCE_DIR/scripts/install-comfyui-runtime"
 
 rm -f /etc/nginx/sites-enabled/default
 install -m 0644 "$SOURCE_DIR/nginx/ooc-forge.conf" /etc/nginx/sites-available/ooc-forge
@@ -41,10 +96,14 @@ ln -sfn /etc/nginx/sites-available/ooc-forge /etc/nginx/sites-enabled/ooc-forge
 
 echo forge > /etc/hostname
 
+systemctl enable ooc-forge-appliance-policy.service
 systemctl enable NetworkManager.service
 systemctl enable avahi-daemon.service
 systemctl enable nginx.service
+systemctl enable ssh.service
+systemctl enable nvidia-persistenced.service
 systemctl enable ooc-forge-init.service
+systemctl enable comfyui.service
 systemctl enable ooc-forge-web.service
 systemctl enable ooc-forge-worker.service
 systemctl enable ooc-forge-sync.service
@@ -71,6 +130,3 @@ systemctl enable ooc-forge-boot-smoke.service
 
 # The Git updater is intentionally not enabled on a timer. It is an on-demand,
 # admin-confirmed Developer/Maintenance action started by the fixed sudoers rule.
-
-# ComfyUI/PyTorch are intentionally not guessed here. They are added only after
-# the reference RTX 3090 runtime matrix is proven and pinned for the v1 image.

@@ -10,6 +10,8 @@ ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 ISO_DIR="$ROOT_DIR/iso"
 WORK_DIR=${OOC_FORGE_ISO_WORK:-"$ROOT_DIR/build/iso"}
 DIST_DIR=${OOC_FORGE_DIST:-"$ROOT_DIR/dist"}
+# shellcheck source=/dev/null
+source "$ROOT_DIR/scripts/comfyui-runtime.env"
 
 read_project_version() {
   python3 - "$ROOT_DIR/pyproject.toml" <<'PY'
@@ -36,8 +38,6 @@ cp -a "$ISO_DIR/auto" "$WORK_DIR/auto"
 cp -a "$ISO_DIR/config" "$WORK_DIR/config"
 
 # Debian live-build's GRUB menu references this font from the binary medium.
-# Stage the distro-provided asset explicitly so UEFI boot cannot depend on an
-# incidental live-build/package combination placing it there for us.
 GRUB_FONT_SOURCE=/usr/share/grub/unicode.pf2
 if [[ ! -r "$GRUB_FONT_SOURCE" ]]; then
   echo "GRUB Unicode font not found at $GRUB_FONT_SOURCE; install grub-common." >&2
@@ -48,7 +48,6 @@ cp -L "$GRUB_FONT_SOURCE" \
   "$WORK_DIR/config/includes.binary/boot/grub/fonts/unicode.pf2"
 
 mkdir -p "$WORK_DIR/config/includes.chroot/etc/ooc-forge"
-
 mkdir -p "$WORK_DIR/config/includes.chroot/opt/ooc-forge"
 rsync -a --delete \
   --exclude '.git/' \
@@ -65,6 +64,10 @@ OOC_FORGE_SOURCE_REF=$SOURCE_REF
 OOC_FORGE_SOURCE_DATE_EPOCH=$SOURCE_DATE_EPOCH
 OOC_FORGE_BASE=debian-trixie
 OOC_FORGE_ARCH=$ARCH
+COMFYUI_VERSION=$COMFYUI_VERSION
+COMFYUI_COMMIT=$COMFYUI_COMMIT
+TORCH_VERSION=$TORCH_VERSION
+PYTORCH_CUDA_VERSION=$PYTORCH_CUDA_VERSION
 ENV
 
 printf '%s\n' "$SOURCE_REF" > "$WORK_DIR/config/includes.chroot/opt/ooc-forge/.ooc-source-ref"
@@ -88,15 +91,27 @@ bash "$ISO_DIR/inspect-grub.sh" "$ISO_OUTPUT" | tee "$ISO_OUTPUT.grub-report.txt
   sha256sum "${IMAGE_BASENAME}.iso" > "${IMAGE_BASENAME}.iso.sha256"
 )
 
-python3 - "$ISO_OUTPUT" "$VERSION" "$ARCH" "$SOURCE_REF" "$SOURCE_DATE_EPOCH" <<'PY'
+python3 - \
+  "$ISO_OUTPUT" "$VERSION" "$ARCH" "$SOURCE_REF" "$SOURCE_DATE_EPOCH" \
+  "$COMFYUI_VERSION" "$COMFYUI_COMMIT" "$TORCH_VERSION" "$PYTORCH_CUDA_VERSION" <<'PY'
 import hashlib
 import json
 import pathlib
 import subprocess
 import sys
 
-iso_path = pathlib.Path(sys.argv[1])
-version, arch, source_ref, source_date_epoch = sys.argv[2:]
+(
+    iso_arg,
+    version,
+    arch,
+    source_ref,
+    source_date_epoch,
+    comfyui_version,
+    comfyui_commit,
+    torch_version,
+    cuda_version,
+) = sys.argv[1:]
+iso_path = pathlib.Path(iso_arg)
 digest = hashlib.sha256(iso_path.read_bytes()).hexdigest()
 try:
     live_build_version = subprocess.check_output(["lb", "--version"], text=True).strip()
@@ -116,6 +131,18 @@ manifest = {
     "secure_boot": False,
     "models_bundled": False,
     "developer_git_update": True,
+    "ssh_server": True,
+    "apt_sources_managed": True,
+    "network_manager_owned": True,
+    "nouveau_blacklisted": True,
+    "execution_stack": {
+        "bundled": True,
+        "comfyui_version": comfyui_version,
+        "comfyui_commit": comfyui_commit,
+        "torch_version": torch_version,
+        "cuda_runtime": cuda_version,
+        "listen": "127.0.0.1:8188",
+    },
     "usb_boot": {
         "hybrid_mbr": True,
         "gpt": True,

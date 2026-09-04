@@ -6,7 +6,10 @@ on:
       - 'iso/**'
       - 'systemd/**'
       - 'nginx/**'
+      - 'scripts/**'
       - 'workflows/**'
+      - 'forge/storage.py'
+      - 'forge/__init__.py'
       - 'pyproject.toml'
       - '.github/workflows/forge-iso.yml'
   workflow_dispatch:
@@ -29,6 +32,12 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Reclaim runner disk for bundled CUDA runtime
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc 2>/dev/null || true
+          docker system prune -af || true
+          df -h
 
       - name: Build inside Debian 13
         run: |
@@ -58,10 +67,10 @@ jobs:
 
           if [ "$status" -ne 0 ]; then
             echo "=== OOC Forge live-build error digest ==="
-            grep -Ei '(^E:|^W:|ERROR|Error|Unable|not found|cannot|failed|Failure|No space|permission denied|dpkg: error|apt.*error|dkms|nvidia|grub|lb .*failed)' \
-              build/ci-live-build.log | tail -n 100 || true
-            echo "=== OOC Forge live-build final 100 lines ==="
-            tail -n 100 build/ci-live-build.log || true
+            grep -Ei '(^E:|^W:|ERROR|Error|Unable|not found|cannot|failed|Failure|No space|permission denied|dpkg: error|apt.*error|dkms|nvidia|grub|comfy|torch|cuda|lb .*failed)' \
+              build/ci-live-build.log | tail -n 140 || true
+            echo "=== OOC Forge live-build final 140 lines ==="
+            tail -n 140 build/ci-live-build.log || true
             exit "$status"
           fi
 
@@ -78,15 +87,48 @@ jobs:
       - name: Validate ISO artifacts
         run: |
           sudo apt-get update
-          sudo apt-get install -y fdisk ovmf qemu-system-x86 xorriso
+          sudo apt-get install -y fdisk ovmf qemu-system-x86 xorriso squashfs-tools
           test -s dist/ooc-forge-*.iso
           (
             cd dist
             sha256sum -c ooc-forge-*.iso.sha256
           )
           python -m json.tool dist/ooc-forge-*.iso.manifest.json >/dev/null
+          python - <<'PY'
+          import glob
+          import json
+
+          manifest_path = glob.glob('dist/ooc-forge-*.iso.manifest.json')[0]
+          value = json.load(open(manifest_path, encoding='utf-8'))
+          assert value['version'] == '0.1.1'
+          assert value['ssh_server'] is True
+          assert value['nouveau_blacklisted'] is True
+          assert value['execution_stack']['bundled'] is True
+          assert value['execution_stack']['comfyui_version'] == 'v0.34.0'
+          assert value['execution_stack']['comfyui_commit'] == '12d5279438bfefc058a269eae805ceab6047777f'
+          assert value['execution_stack']['torch_version'] == '2.7.1'
+          assert value['execution_stack']['cuda_runtime'] == '12.6'
+          assert value['execution_stack']['listen'] == '127.0.0.1:8188'
+          PY
           bash ./iso/inspect-boot.sh dist/ooc-forge-*.iso
           bash ./iso/inspect-grub.sh dist/ooc-forge-*.iso
+
+      - name: Inspect bundled appliance runtime
+        run: |
+          iso=$(find dist -maxdepth 1 -name 'ooc-forge-*.iso' -print -quit)
+          run_dir=$(mktemp -d)
+          trap 'rm -rf "$run_dir"' EXIT
+          xorriso -osirrox on -indev "$iso" -extract /live/filesystem.squashfs "$run_dir/filesystem.squashfs" >/dev/null 2>&1
+
+          unsquashfs -cat "$run_dir/filesystem.squashfs" /etc/ooc-forge/comfyui-runtime.env | grep -Fxq 'COMFYUI_VERSION=v0.34.0'
+          unsquashfs -cat "$run_dir/filesystem.squashfs" /etc/ooc-forge/comfyui-runtime.env | grep -Fxq 'TORCH_VERSION=2.7.1'
+          unsquashfs -cat "$run_dir/filesystem.squashfs" /etc/ooc-forge/comfyui-runtime.env | grep -Fxq 'PYTORCH_CUDA_VERSION=12.6'
+          unsquashfs -cat "$run_dir/filesystem.squashfs" /etc/modprobe.d/blacklist-nouveau.conf | grep -Fxq 'blacklist nouveau'
+          unsquashfs -cat "$run_dir/filesystem.squashfs" /etc/systemd/system/comfyui.service | grep -Fq -- '--listen 127.0.0.1 --port 8188'
+          unsquashfs -ll "$run_dir/filesystem.squashfs" | grep -Fq '/opt/ComfyUI/main.py'
+          unsquashfs -ll "$run_dir/filesystem.squashfs" | grep -Fq '/opt/ComfyUI/.venv/bin/python'
+          unsquashfs -ll "$run_dir/filesystem.squashfs" | grep -Fq '/usr/sbin/sshd'
+          unsquashfs -ll "$run_dir/filesystem.squashfs" | grep -Eq '/lib/modules/.*/updates/dkms/(nvidia-current|nvidia)\.ko'
 
       - name: Boot ISO as UEFI USB mass storage
         run: bash ./iso/qemu-uefi-smoke.sh dist/ooc-forge-*.iso
@@ -106,6 +148,8 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: ooc-forge-iso-${{ github.sha }}
+          compression-level: 0
+          retention-days: 7
           path: |
             dist/ooc-forge-*.iso
             dist/ooc-forge-*.iso.sha256

@@ -9,7 +9,6 @@ fi
 SOURCE_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 FORGE_USER=${FORGE_USER:-forge}
 FORGE_DATA=${FORGE_DATA:-/forge-data}
-COMFYUI_DIR=${COMFYUI_DIR:-/opt/ComfyUI}
 FORGE_DEFAULT_CHECKPOINT=${FORGE_DEFAULT_CHECKPOINT:-}
 SOURCE_REF=${OOC_FORGE_SOURCE_REF:-}
 if [[ -z "$SOURCE_REF" ]]; then
@@ -17,7 +16,10 @@ if [[ -z "$SOURCE_REF" ]]; then
 fi
 
 apt-get update
-apt-get install -y python3 python3-venv python3-pip nginx avahi-daemon network-manager curl rsync git sudo
+apt-get install -y \
+  python3 python3-venv python3-pip \
+  nginx avahi-daemon network-manager \
+  curl rsync git sudo openssh-server build-essential ffmpeg
 
 if ! id "$FORGE_USER" >/dev/null 2>&1; then
   useradd --system --create-home --home-dir /var/lib/ooc-forge --shell /usr/sbin/nologin "$FORGE_USER"
@@ -40,31 +42,43 @@ ENV
 chmod 0640 /etc/ooc-forge/forge.env
 chown root:"$FORGE_USER" /etc/ooc-forge/forge.env
 
+cat > /etc/ooc-forge/comfyui-model-paths.yaml <<YAML
+ooc_forge:
+  base_path: $FORGE_DATA
+  is_default: true
+  checkpoints: models/checkpoints
+  loras: models/loras
+  vae: models/vae
+  text_encoders: models/text_encoders
+  diffusion_models: models/diffusion_models
+  clip_vision: models/clip_vision
+  controlnet: models/controlnet
+  upscale_models: models/upscale_models
+  embeddings: models/embeddings
+YAML
+
 install -o "$FORGE_USER" -g "$FORGE_USER" -d "$FORGE_DATA/workflows/manual-image"
 install -o "$FORGE_USER" -g "$FORGE_USER" -m 0644 "$SOURCE_DIR/workflows/manual-image/manifest.json" "$FORGE_DATA/workflows/manual-image/manifest.json"
 install -o "$FORGE_USER" -g "$FORGE_USER" -m 0644 "$SOURCE_DIR/workflows/manual-image/workflow.json" "$FORGE_DATA/workflows/manual-image/workflow.json"
 
-for unit in ooc-forge-init ooc-forge-web ooc-forge-worker ooc-forge-sync ooc-forge-git-update; do
+# Use the exact same pinned execution payload as the appliance ISO.
+"$SOURCE_DIR/scripts/install-comfyui-runtime"
+
+for unit in ooc-forge-init ooc-forge-web ooc-forge-worker ooc-forge-sync comfyui; do
   install -m 0644 "$SOURCE_DIR/systemd/$unit.service" "/etc/systemd/system/$unit.service"
 done
+install -m 0644 "$SOURCE_DIR/systemd/ooc-forge-git-update.service" /etc/systemd/system/ooc-forge-git-update.service
 install -m 0755 "$SOURCE_DIR/scripts/ooc-forge-git-update" /usr/local/sbin/ooc-forge-git-update
 install -m 0440 "$SOURCE_DIR/systemd/ooc-forge-maintenance.sudoers" /etc/sudoers.d/ooc-forge-maintenance
 visudo -cf /etc/sudoers.d/ooc-forge-maintenance >/dev/null
-
-if [[ -f "$COMFYUI_DIR/main.py" && -x "$COMFYUI_DIR/.venv/bin/python" ]]; then
-  install -m 0644 "$SOURCE_DIR/systemd/comfyui.service" /etc/systemd/system/comfyui.service
-  systemctl enable comfyui.service
-else
-  echo "ComfyUI not found at $COMFYUI_DIR; install it before image generation." >&2
-fi
 
 rm -f /etc/nginx/sites-enabled/default
 install -m 0644 "$SOURCE_DIR/nginx/ooc-forge.conf" /etc/nginx/sites-available/ooc-forge
 ln -sfn /etc/nginx/sites-available/ooc-forge /etc/nginx/sites-enabled/ooc-forge
 hostnamectl set-hostname forge
-systemctl enable --now NetworkManager avahi-daemon nginx
 systemctl daemon-reload
-systemctl enable --now ooc-forge-init ooc-forge-web ooc-forge-worker ooc-forge-sync
+systemctl enable --now NetworkManager avahi-daemon nginx ssh
+systemctl enable --now ooc-forge-init comfyui ooc-forge-web ooc-forge-worker ooc-forge-sync
 
 echo
 echo "OOC Forge local runtime installed."

@@ -12,6 +12,11 @@ curl
 rsync
 jq
 git
+openssh-server
+dkms
+kmod
+build-essential
+ffmpeg
 
 # Forge runtime
 python3

@@ -25,9 +25,16 @@ jobs:
 
       - name: Validate appliance files
         run: |
-          bash -n scripts/forge-doctor.sh scripts/install-local.sh scripts/ooc-forge-git-update
+          bash -n \
+            scripts/forge-doctor.sh \
+            scripts/install-local.sh \
+            scripts/install-comfyui-runtime \
+            scripts/ooc-forge-appliance-policy \
+            scripts/ooc-forge-git-update
           sudo visudo -cf systemd/ooc-forge-maintenance.sudoers >/dev/null
           test -s systemd/ooc-forge-git-update.service
+          test -s systemd/ooc-forge-appliance-policy.service
+          test -s systemd/comfyui.service
           python -m json.tool workflows/manual-image/manifest.json >/dev/null
           python -m json.tool workflows/manual-image/workflow.json >/dev/null
           python - <<'PY'
@@ -36,7 +43,7 @@ jobs:
 
           project = tomllib.loads(pathlib.Path('pyproject.toml').read_text(encoding='utf-8'))
           assert project['project']['name'] == 'ooc-forge'
-          assert project['project']['version'] == '0.1.0'
+          assert project['project']['version'] == '0.1.1'
           PY
 
       - name: Persistence and maintenance tests
