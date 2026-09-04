@@ -15,7 +15,12 @@ from forge.config import Config
 from forge.db import create_job, get_job, init_db, list_jobs, set_setting, setting
 from forge.health import capabilities, report
 from forge.maintenance import git_update_status, installed_source_ref, request_git_update
-from forge.models import REFERENCE_IMAGE_MODEL, model_install_status, request_reference_model_install
+from forge.models import (
+    REFERENCE_IMAGE_MODEL,
+    model_install_running,
+    model_install_status,
+    request_reference_model_install,
+)
 from forge.storage import (
     ensure_identity,
     ensure_layout,
@@ -141,6 +146,7 @@ def create_app() -> Flask:
             reference_model=REFERENCE_IMAGE_MODEL,
             reference_installed=REFERENCE_IMAGE_MODEL["filename"] in checkpoints,
             install_status=model_install_status(config),
+            install_running=model_install_running(),
             capabilities=capabilities(config),
         )
 
