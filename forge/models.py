@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+from pathlib import Path
 from typing import Any
 
 from forge.config import Config
@@ -18,12 +19,24 @@ REFERENCE_IMAGE_MODEL = {
     "license_url": "https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/blob/main/LICENSE.md",
 }
 
+REFERENCE_UPSCALE_MODEL = {
+    "id": "realesrgan-x4plus",
+    "name": "RealESRGAN x4plus",
+    "filename": "RealESRGAN_x4plus.pth",
+    "size_label": "about 67 MB",
+    "sha256": "4fa0d38905f75ac06eb49a7951b426670021be3018265fd191d2125df9d682f1",
+    "source_url": "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth",
+    "repository_url": "https://github.com/xinntao/Real-ESRGAN",
+    "license_url": "https://github.com/xinntao/Real-ESRGAN/blob/master/LICENSE",
+    "scale": 4,
+}
+
 BUSY_MODEL_STATES = {"QUEUED", "DOWNLOADING", "VERIFYING", "INSTALLING"}
 MODEL_INSTALL_SERVICE = "ooc-forge-model-install.service"
+UPSCALE_MODEL_INSTALL_SERVICE = "ooc-forge-upscale-model-install.service"
 
 
-def model_install_status(config: Config) -> dict[str, Any]:
-    path = config.data_root / "maintenance" / "model-install-status.json"
+def _status(path: Path) -> dict[str, Any]:
     if not path.exists():
         return {"state": "IDLE", "model": None, "message": None}
     try:
@@ -33,10 +46,18 @@ def model_install_status(config: Config) -> dict[str, Any]:
     return value if isinstance(value, dict) else {"state": "UNKNOWN", "model": None}
 
 
-def model_install_running() -> bool:
+def model_install_status(config: Config) -> dict[str, Any]:
+    return _status(config.data_root / "maintenance" / "model-install-status.json")
+
+
+def upscale_model_install_status(config: Config) -> dict[str, Any]:
+    return _status(config.data_root / "maintenance" / "upscale-model-install-status.json")
+
+
+def _service_running(service: str) -> bool:
     try:
         result = subprocess.run(
-            ["/usr/bin/systemctl", "is-active", "--quiet", MODEL_INSTALL_SERVICE],
+            ["/usr/bin/systemctl", "is-active", "--quiet", service],
             check=False,
             timeout=5,
         )
@@ -45,16 +66,40 @@ def model_install_running() -> bool:
     return result.returncode == 0
 
 
-def request_reference_model_install(config: Config) -> None:
-    status = model_install_status(config)
+def model_install_running() -> bool:
+    return _service_running(MODEL_INSTALL_SERVICE)
+
+
+def upscale_model_install_running() -> bool:
+    return _service_running(UPSCALE_MODEL_INSTALL_SERVICE)
+
+
+def _request_install(config: Config, *, status: dict[str, Any], service: str, running: bool, label: str) -> None:
     state = str(status.get("state") or "").upper()
-    if state in BUSY_MODEL_STATES and model_install_running():
-        raise RuntimeError("Reference image model installation is already running.")
-    # The installer is intentionally long-running (a multi-GB verified download).
-    # Queue the systemd job and return immediately so the HTTP request does not
-    # wait for the oneshot service to finish and falsely time out after 10s.
+    if state in BUSY_MODEL_STATES and running:
+        raise RuntimeError(f"{label} installation is already running.")
     subprocess.run(
-        ["sudo", "/usr/bin/systemctl", "--no-block", "start", MODEL_INSTALL_SERVICE],
+        ["sudo", "/usr/bin/systemctl", "--no-block", "start", service],
         check=True,
         timeout=10,
+    )
+
+
+def request_reference_model_install(config: Config) -> None:
+    _request_install(
+        config,
+        status=model_install_status(config),
+        service=MODEL_INSTALL_SERVICE,
+        running=model_install_running(),
+        label="Reference image model",
+    )
+
+
+def request_reference_upscale_model_install(config: Config) -> None:
+    _request_install(
+        config,
+        status=upscale_model_install_status(config),
+        service=UPSCALE_MODEL_INSTALL_SERVICE,
+        running=upscale_model_install_running(),
+        label="Print upscaler",
     )
