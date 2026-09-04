@@ -10,6 +10,12 @@ def read(relative: str) -> str:
     return (ROOT / relative).read_text(encoding="utf-8")
 
 
+def assert_looped_service_installed(text: str, service: str) -> None:
+    assert service in text
+    assert '"$SOURCE_DIR/systemd/$unit.service"' in text
+    assert '"/etc/systemd/system/$unit.service"' in text
+
+
 def test_prompt_compiler_runtime_is_pinned_and_cpu_only():
     pins = read("scripts/prompt-runtime.env")
     assert "LLAMA_CPP_VERSION=v0.4.0" in pins
@@ -62,8 +68,8 @@ def test_local_install_owns_prompt_runtime_video_workflow_and_services():
     assert "cmake ffmpeg" in installer
     assert "manual-image print-upscale video-wan22-ti2v" in installer
     assert '"$SOURCE_DIR/scripts/install-prompt-runtime"' in installer
-    assert "ooc-forge-prompt-model-install" in installer
-    assert "ooc-forge-video-model-install" in installer
+    assert_looped_service_installed(installer, "ooc-forge-prompt-model-install")
+    assert_looped_service_installed(installer, "ooc-forge-video-model-install")
 
 
 def test_iso_owns_prompt_runtime_and_video_contract_without_model_weights():
@@ -72,8 +78,8 @@ def test_iso_owns_prompt_runtime_and_video_contract_without_model_weights():
     hook = read("iso/config/hooks/live/010-ooc-forge-runtime.hook.chroot")
     assert "manual-image print-upscale video-wan22-ti2v" in hook
     assert '"$SOURCE_DIR/scripts/install-prompt-runtime"' in hook
-    assert "ooc-forge-prompt-model-install.service" in hook
-    assert "ooc-forge-video-model-install.service" in hook
+    assert_looped_service_installed(hook, "ooc-forge-prompt-model-install")
+    assert_looped_service_installed(hook, "ooc-forge-video-model-install")
     assert "systemctl enable ooc-forge-prompt-model-install.service" not in hook
     assert "systemctl enable ooc-forge-video-model-install.service" not in hook
     # Model weights are managed after install; only verified installer metadata belongs in the ISO.
