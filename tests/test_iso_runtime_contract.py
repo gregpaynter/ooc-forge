@@ -50,6 +50,20 @@ def test_comfyui_remains_local_and_uses_persistent_forge_data():
         assert path in service
 
 
+def test_comfyui_service_waits_for_api_readiness_before_dependents_start():
+    service = read("systemd/comfyui.service")
+    assert "ExecStartPost=/usr/bin/curl" in service
+    assert "--retry-connrefused" in service
+    assert "--retry-max-time 120" in service
+    assert "http://127.0.0.1:8188/system_stats" in service
+    assert "TimeoutStartSec=180" in service
+
+    worker = read("systemd/ooc-forge-worker.service")
+    assert "After=ooc-forge-init.service comfyui.service" in worker
+    assert "Requires=ooc-forge-init.service comfyui.service" in worker
+    assert "Wants=comfyui.service" not in worker
+
+
 def test_gpu_bootstrap_proves_uvm_and_real_cuda_allocation():
     script = read("scripts/ooc-forge-gpu-init")
     assert "modprobe nvidia-current-uvm" in script
