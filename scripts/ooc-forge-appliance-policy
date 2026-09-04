@@ -10,6 +10,15 @@ mkdir -p "$STATE_DIR"
 mkdir -p /etc/ssh
 ssh-keygen -A
 
+# Keep the canonical Forge hostname resolvable locally. Debian Installer can
+# regenerate /etc/hosts independently of /etc/hostname, which otherwise leaves
+# sudo and other local tools warning that host "forge" cannot be resolved.
+if grep -q '^127\.0\.1\.1[[:space:]]' /etc/hosts; then
+  sed -i 's/^127\.0\.1\.1.*/127.0.1.1\tforge/' /etc/hosts
+else
+  printf '127.0.1.1\tforge\n' >> /etc/hosts
+fi
+
 if [ -e "$MARKER" ]; then
   exit 0
 fi
