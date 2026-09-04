@@ -35,11 +35,15 @@ fi
 
 # Prompt compilation is intentionally CPU-only. The small Qwen model should not
 # consume RTX 3090 VRAM needed by SDXL/Wan creative execution.
+#
+# At the pinned upstream commit, tools/cli is added under LLAMA_BUILD_SERVER.
+# Enabling that CMake option is therefore required to expose the llama-cli target;
+# we still build/install only llama-cli and keep CUDA/CURL disabled.
 cmake -S "$RUNTIME_DIR" -B "$BUILD_DIR" \
   -DCMAKE_BUILD_TYPE=Release \
   -DGGML_CUDA=OFF \
   -DLLAMA_CURL=OFF \
-  -DLLAMA_BUILD_SERVER=OFF \
+  -DLLAMA_BUILD_SERVER=ON \
   -DBUILD_SHARED_LIBS=OFF
 cmake --build "$BUILD_DIR" --config Release -j"$(nproc)" --target llama-cli
 
