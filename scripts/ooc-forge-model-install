@@ -1,0 +1,156 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+if [[ ${EUID:-$(id -u)} -ne 0 ]]; then
+  echo "Run as root." >&2
+  exit 1
+fi
+
+FORGE_USER=${FORGE_USER:-forge}
+FORGE_DATA_ROOT=${FORGE_DATA_ROOT:-/forge-data}
+MODEL_ID=sdxl-base-1.0
+MODEL_NAME="Stable Diffusion XL Base 1.0"
+MODEL_FILE=sd_xl_base_1.0.safetensors
+MODEL_SHA256=31e35c80fc4829d14f90153f4c74cd59c90b779f6afe05a74cd6120b893f7e5b
+MODEL_URL='https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/resolve/main/sd_xl_base_1.0.safetensors?download=true'
+MODEL_LICENSE_URL='https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/blob/main/LICENSE.md'
+MIN_FREE_BYTES=8000000000
+CHECKPOINT_DIR="$FORGE_DATA_ROOT/models/checkpoints"
+CACHE_DIR="$FORGE_DATA_ROOT/cache/model-downloads/$MODEL_ID"
+PART="$CACHE_DIR/$MODEL_FILE.part"
+TARGET="$CHECKPOINT_DIR/$MODEL_FILE"
+STATUS="$FORGE_DATA_ROOT/maintenance/model-install-status.json"
+ENV_FILE=/etc/ooc-forge/forge.env
+LAST_STATE=QUEUED
+
+write_status() {
+  local state=$1
+  local message=$2
+  LAST_STATE=$state
+  install -d -o "$FORGE_USER" -g "$FORGE_USER" -m 0750 "$(dirname "$STATUS")"
+  python3 - "$STATUS" "$state" "$message" "$MODEL_ID" "$MODEL_NAME" "$MODEL_FILE" "$MODEL_SHA256" "$MODEL_LICENSE_URL" <<'PY'
+import json
+import os
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+path = Path(sys.argv[1])
+value = {
+    "state": sys.argv[2],
+    "message": sys.argv[3],
+    "model": {
+        "id": sys.argv[4],
+        "name": sys.argv[5],
+        "filename": sys.argv[6],
+        "sha256": sys.argv[7],
+        "license_url": sys.argv[8],
+    },
+    "updated_at": datetime.now(timezone.utc).isoformat(),
+}
+temporary = path.with_name(f".{path.name}.tmp")
+temporary.write_text(json.dumps(value, indent=2) + "\n", encoding="utf-8")
+os.chmod(temporary, 0o644)
+temporary.replace(path)
+PY
+  chown "$FORGE_USER:$FORGE_USER" "$STATUS"
+}
+
+on_error() {
+  local rc=$?
+  if [[ "$LAST_STATE" != "FAILED" && "$LAST_STATE" != "COMPLETED" ]]; then
+    write_status FAILED "Reference image model installation failed. Inspect journalctl -u ooc-forge-model-install.service for details."
+  fi
+  exit "$rc"
+}
+trap on_error ERR
+
+write_status QUEUED "Preparing the reference image model installation."
+install -d -o "$FORGE_USER" -g "$FORGE_USER" -m 0750 "$CHECKPOINT_DIR" "$CACHE_DIR"
+
+if [[ -f "$TARGET" ]]; then
+  existing_sha=$(sha256sum "$TARGET" | awk '{print $1}')
+  if [[ "$existing_sha" != "$MODEL_SHA256" ]]; then
+    write_status FAILED "An existing $MODEL_FILE has an unexpected SHA-256; refusing to replace it automatically."
+    exit 1
+  fi
+  write_status INSTALLING "The verified reference image model is already installed; ensuring it is selected as the default."
+else
+  available=$(df -PB1 "$FORGE_DATA_ROOT" | awk 'NR == 2 {print $4}')
+  partial=0
+  [[ ! -f "$PART" ]] || partial=$(stat -c '%s' "$PART")
+  if (( available + partial < MIN_FREE_BYTES )); then
+    write_status FAILED "At least 8 GB of Forge Data capacity is required to install the reference image model."
+    exit 1
+  fi
+
+  write_status DOWNLOADING "Downloading Stable Diffusion XL Base 1.0 (about 6.94 GB). The download is resumable."
+  if ! curl \
+      --fail \
+      --location \
+      --retry 5 \
+      --retry-delay 2 \
+      --retry-all-errors \
+      --continue-at - \
+      --output "$PART" \
+      "$MODEL_URL"; then
+    echo "Resumed download failed; retrying from the beginning." >&2
+    rm -f "$PART"
+    curl \
+      --fail \
+      --location \
+      --retry 5 \
+      --retry-delay 2 \
+      --retry-all-errors \
+      --output "$PART" \
+      "$MODEL_URL"
+  fi
+
+  write_status VERIFYING "Verifying the downloaded checkpoint against the pinned official SHA-256."
+  actual_sha=$(sha256sum "$PART" | awk '{print $1}')
+  if [[ "$actual_sha" != "$MODEL_SHA256" ]]; then
+    rm -f "$PART"
+    write_status FAILED "Downloaded checkpoint SHA-256 did not match the pinned reference value. The file was discarded."
+    exit 1
+  fi
+
+  write_status INSTALLING "Installing the verified checkpoint into persistent Forge Data."
+  chown "$FORGE_USER:$FORGE_USER" "$PART"
+  chmod 0644 "$PART"
+  mv "$PART" "$TARGET"
+fi
+
+if [[ -f "$ENV_FILE" ]]; then
+  python3 - "$ENV_FILE" "$MODEL_FILE" <<'PY'
+import os
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+checkpoint = sys.argv[2]
+lines = path.read_text(encoding="utf-8").splitlines()
+updated = []
+found = False
+for line in lines:
+    if line.startswith("FORGE_DEFAULT_CHECKPOINT="):
+        found = True
+        current = line.split("=", 1)[1].strip()
+        updated.append(line if current else f"FORGE_DEFAULT_CHECKPOINT={checkpoint}")
+    else:
+        updated.append(line)
+if not found:
+    updated.append(f"FORGE_DEFAULT_CHECKPOINT={checkpoint}")
+temporary = path.with_name(f".{path.name}.tmp")
+temporary.write_text("\n".join(updated) + "\n", encoding="utf-8")
+os.chmod(temporary, 0o640)
+temporary.replace(path)
+PY
+  chown root:"$FORGE_USER" "$ENV_FILE"
+fi
+
+# ComfyUI discovers model filenames dynamically, but restarting the execution
+# services gives the newly installed reference model a deterministic clean start.
+systemctl try-restart comfyui.service ooc-forge-worker.service >/dev/null 2>&1 || true
+
+write_status COMPLETED "Reference image model installed and ready for Manual Create."
+echo "$MODEL_FILE installed successfully."
