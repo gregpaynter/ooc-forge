@@ -16,6 +16,7 @@ openssh-server
 dkms
 kmod
 build-essential
+cmake
 ffmpeg
 
 # Forge runtime
