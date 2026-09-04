@@ -102,7 +102,7 @@ def test_reference_image_model_is_separate_verified_and_appliance_managed():
     assert "TimeoutStartSec=infinity" in service
 
     sudoers = read("systemd/ooc-forge-maintenance.sudoers")
-    assert "systemctl start ooc-forge-model-install.service" in sudoers
+    assert "systemctl --no-block start ooc-forge-model-install.service" in sudoers
 
     installer = read("scripts/install-local.sh")
     assert "ooc-forge-model-install.service" in installer

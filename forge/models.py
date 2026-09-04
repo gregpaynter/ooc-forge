@@ -50,8 +50,11 @@ def request_reference_model_install(config: Config) -> None:
     state = str(status.get("state") or "").upper()
     if state in BUSY_MODEL_STATES and model_install_running():
         raise RuntimeError("Reference image model installation is already running.")
+    # The installer is intentionally long-running (a multi-GB verified download).
+    # Queue the systemd job and return immediately so the HTTP request does not
+    # wait for the oneshot service to finish and falsely time out after 10s.
     subprocess.run(
-        ["sudo", "/usr/bin/systemctl", "start", MODEL_INSTALL_SERVICE],
+        ["sudo", "/usr/bin/systemctl", "--no-block", "start", MODEL_INSTALL_SERVICE],
         check=True,
         timeout=10,
     )
