@@ -124,7 +124,7 @@ def test_printable_work_pipeline_is_appliance_owned_and_model_verified():
     assert '"output_kind": "print_work"' in manifest
 
     script = read("scripts/ooc-forge-upscale-model-install")
-    assert "RealESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth" in script
+    assert "xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth" in script
     assert "4fa0d38905f75ac06eb49a7951b426670021be3018265fd191d2125df9d682f1" in script
     assert 'MODEL_DIR="$FORGE_DATA_ROOT/models/upscale_models"' in script
     assert "--continue-at -" in script
