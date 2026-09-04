@@ -10,16 +10,20 @@ from flask import Flask, flash, redirect, render_template, request, send_file, s
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from forge import __version__
-from forge.comfy import installed_checkpoints
+from forge.comfy import installed_checkpoints, installed_upscale_models
 from forge.config import Config
 from forge.db import create_job, get_job, init_db, list_jobs, set_setting, setting
 from forge.health import capabilities, report
 from forge.maintenance import git_update_status, installed_source_ref, request_git_update
 from forge.models import (
     REFERENCE_IMAGE_MODEL,
+    REFERENCE_UPSCALE_MODEL,
     model_install_running,
     model_install_status,
     request_reference_model_install,
+    request_reference_upscale_model_install,
+    upscale_model_install_running,
+    upscale_model_install_status,
 )
 from forge.storage import (
     ensure_identity,
@@ -104,11 +108,22 @@ def create_app() -> Flask:
     @login_required
     def create():
         checkpoints = installed_checkpoints(config)
+        upscale_models = installed_upscale_models(config)
         selected_checkpoint = (
             request.form.get("checkpoint", "").strip()
             if request.method == "POST"
             else (config.default_checkpoint or (checkpoints[0] if len(checkpoints) == 1 else ""))
         )
+        selected_upscale_model = (
+            request.form.get("upscale_model", "").strip()
+            if request.method == "POST"
+            else (
+                REFERENCE_UPSCALE_MODEL["filename"]
+                if REFERENCE_UPSCALE_MODEL["filename"] in upscale_models
+                else (upscale_models[0] if len(upscale_models) == 1 else "")
+            )
+        )
+        create_printable_work = request.form.get("create_printable_work") == "yes"
         if request.method == "POST":
             payload: dict[str, Any] = {
                 "title": request.form.get("title", "").strip() or "Untitled",
@@ -120,6 +135,8 @@ def create_app() -> Flask:
                 "height": int(request.form.get("height") or 1024),
                 "steps": int(request.form.get("steps") or 24),
                 "seed": int(request.form.get("seed") or -1),
+                "create_printable_work": create_printable_work,
+                "upscale_model": selected_upscale_model if create_printable_work else None,
             }
             if not payload["prompt"]:
                 flash("Prompt is required.")
@@ -127,26 +144,38 @@ def create_app() -> Flask:
                 flash("No image checkpoint is installed. Install the reference model from Models before generating.")
             elif selected_checkpoint not in checkpoints:
                 flash("Select an installed image checkpoint.")
+            elif create_printable_work and selected_upscale_model not in upscale_models:
+                flash("Install/select a print upscaler from Models before creating a printable Work.")
             else:
-                job_id = create_job(config, source="LOCAL", job_type="MANUAL_IMAGE", request=payload)
+                job_type = "MANUAL_IMAGE_PRINT" if create_printable_work else "MANUAL_IMAGE"
+                job_id = create_job(config, source="LOCAL", job_type=job_type, request=payload)
                 return redirect(url_for("job", job_id=job_id))
         return render_template(
             "create.html",
             checkpoints=checkpoints,
             selected_checkpoint=selected_checkpoint,
+            upscale_models=upscale_models,
+            selected_upscale_model=selected_upscale_model,
+            create_printable_work=create_printable_work,
         )
 
     @app.get("/models")
     @login_required
     def models():
         checkpoints = installed_checkpoints(config)
+        upscale_models = installed_upscale_models(config)
         return render_template(
             "models.html",
             checkpoints=checkpoints,
+            upscale_models=upscale_models,
             reference_model=REFERENCE_IMAGE_MODEL,
             reference_installed=REFERENCE_IMAGE_MODEL["filename"] in checkpoints,
             install_status=model_install_status(config),
             install_running=model_install_running(),
+            reference_upscale_model=REFERENCE_UPSCALE_MODEL,
+            reference_upscale_installed=REFERENCE_UPSCALE_MODEL["filename"] in upscale_models,
+            upscale_install_status=upscale_model_install_status(config),
+            upscale_install_running=upscale_model_install_running(),
             capabilities=capabilities(config),
         )
 
@@ -168,6 +197,26 @@ def create_app() -> Flask:
             flash("Reference image model installation started. Refresh Models to see status.")
         except (RuntimeError, subprocess.SubprocessError) as error:
             flash(f"Could not start model installation: {error}")
+        return redirect(url_for("models"))
+
+    @app.post("/models/upscale/install")
+    @login_required
+    def install_reference_upscale_model():
+        if request.form.get("accept_license") != "yes":
+            flash("Acknowledge the print upscaler licence before installation.")
+            return redirect(url_for("models"))
+        digest = setting(config, "admin_password_hash")
+        if not digest or not check_password_hash(digest, request.form.get("password", "")):
+            flash("Admin password is required to install the print upscaler.")
+            return redirect(url_for("models"))
+        if REFERENCE_UPSCALE_MODEL["filename"] in installed_upscale_models(config):
+            flash("The reference print upscaler is already installed.")
+            return redirect(url_for("models"))
+        try:
+            request_reference_upscale_model_install(config)
+            flash("Print upscaler installation started. Refresh Models to see status.")
+        except (RuntimeError, subprocess.SubprocessError) as error:
+            flash(f"Could not start print upscaler installation: {error}")
         return redirect(url_for("models"))
 
     @app.get("/jobs")
