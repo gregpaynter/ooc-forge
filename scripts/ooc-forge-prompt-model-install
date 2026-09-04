@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+if [[ ${EUID:-$(id -u)} -ne 0 ]]; then
+  echo "Run as root." >&2
+  exit 1
+fi
+
+FORGE_USER=${FORGE_USER:-forge}
+FORGE_DATA_ROOT=${FORGE_DATA_ROOT:-/forge-data}
+MODEL_ID=qwen3-1.7b-q4-k-m
+MODEL_NAME="Qwen3 1.7B Q4_K_M"
+MODEL_FILE=Qwen3-1.7B-Q4_K_M.gguf
+MODEL_SHA256=d2387ca2dbfee2ffabce7120d3770dadca0b293052bc2f0e138fdc940d9bc7b5
+MODEL_URL='https://huggingface.co/ggml-org/Qwen3-1.7B-GGUF/resolve/main/Qwen3-1.7B-Q4_K_M.gguf?download=true'
+MODEL_LICENSE_URL='https://huggingface.co/ggml-org/Qwen3-1.7B-GGUF'
+MODEL_DIR="$FORGE_DATA_ROOT/models/llm"
+CACHE_DIR="$FORGE_DATA_ROOT/cache/model-downloads/$MODEL_ID"
+PART="$CACHE_DIR/$MODEL_FILE.part"
+TARGET="$MODEL_DIR/$MODEL_FILE"
+STATUS="$FORGE_DATA_ROOT/maintenance/prompt-model-install-status.json"
+LAST_STATE=QUEUED
+
+write_status() {
+  local state=$1 message=$2
+  LAST_STATE=$state
+  install -d -o "$FORGE_USER" -g "$FORGE_USER" -m 0750 "$(dirname "$STATUS")"
+  python3 - "$STATUS" "$state" "$message" "$MODEL_ID" "$MODEL_NAME" "$MODEL_FILE" "$MODEL_SHA256" "$MODEL_LICENSE_URL" <<'PY'
+import json, os, sys
+from datetime import datetime, timezone
+from pathlib import Path
+p=Path(sys.argv[1]); value={"state":sys.argv[2],"message":sys.argv[3],"model":{"id":sys.argv[4],"name":sys.argv[5],"filename":sys.argv[6],"sha256":sys.argv[7],"license_url":sys.argv[8]},"updated_at":datetime.now(timezone.utc).isoformat()}
+t=p.with_name(f".{p.name}.tmp"); t.write_text(json.dumps(value,indent=2)+"\n",encoding="utf-8"); os.chmod(t,0o644); t.replace(p)
+PY
+  chown "$FORGE_USER:$FORGE_USER" "$STATUS"
+}
+trap 'rc=$?; [[ "$LAST_STATE" == FAILED || "$LAST_STATE" == COMPLETED ]] || write_status FAILED "Prompt model installation failed. Inspect journalctl -u ooc-forge-prompt-model-install.service."; exit $rc' ERR
+
+write_status QUEUED "Preparing the local prompt compiler model."
+install -d -o "$FORGE_USER" -g "$FORGE_USER" -m 0750 "$MODEL_DIR" "$CACHE_DIR"
+if [[ -f "$TARGET" ]]; then
+  [[ "$(sha256sum "$TARGET" | awk '{print $1}')" == "$MODEL_SHA256" ]] || { write_status FAILED "Existing prompt model has an unexpected SHA-256."; exit 1; }
+else
+  write_status DOWNLOADING "Downloading Qwen3 1.7B Q4_K_M (about 1.28 GB). The download is resumable."
+  curl --fail --location --retry 5 --retry-delay 2 --retry-all-errors --continue-at - --output "$PART" "$MODEL_URL" || { rm -f "$PART"; curl --fail --location --retry 5 --retry-delay 2 --retry-all-errors --output "$PART" "$MODEL_URL"; }
+  write_status VERIFYING "Verifying Qwen prompt model SHA-256."
+  [[ "$(sha256sum "$PART" | awk '{print $1}')" == "$MODEL_SHA256" ]] || { rm -f "$PART"; write_status FAILED "Downloaded prompt model SHA-256 did not match."; exit 1; }
+  write_status INSTALLING "Installing verified prompt model into persistent Forge Data."
+  chown "$FORGE_USER:$FORGE_USER" "$PART"; chmod 0644 "$PART"; mv "$PART" "$TARGET"
+fi
+write_status COMPLETED "Qwen3 prompt compiler model is installed."
+echo "$MODEL_FILE installed successfully."
