@@ -47,10 +47,9 @@ ooc_forge:
 YAML
 chmod 0644 /etc/ooc-forge/comfyui-model-paths.yaml
 
-# Install immutable workflow definitions into persistent Forge Data. Models remain
-# separate, but a fresh ISO must still know both how to create a Study and how to
-# promote that Study into a printable Work once the required models are installed.
-for workflow in manual-image print-upscale; do
+# Seed all immutable workflow definitions. Model weights remain separate Forge
+# Data and are installed later through the authenticated model-management UI.
+for workflow in manual-image print-upscale video-wan22-ti2v; do
   install -o "$FORGE_USER" -g "$FORGE_USER" -d "$FORGE_DATA/workflows/$workflow"
   install -o "$FORGE_USER" -g "$FORGE_USER" -m 0644 "$SOURCE_DIR/workflows/$workflow/manifest.json" "$FORGE_DATA/workflows/$workflow/manifest.json"
   install -o "$FORGE_USER" -g "$FORGE_USER" -m 0644 "$SOURCE_DIR/workflows/$workflow/workflow.json" "$FORGE_DATA/workflows/$workflow/workflow.json"
@@ -66,27 +65,29 @@ for unit in \
   comfyui; do
   install -m 0644 "$SOURCE_DIR/systemd/$unit.service" "/etc/systemd/system/$unit.service"
 done
-install -m 0644 "$SOURCE_DIR/systemd/ooc-forge-git-update.service" /etc/systemd/system/ooc-forge-git-update.service
-install -m 0644 "$SOURCE_DIR/systemd/ooc-forge-model-install.service" /etc/systemd/system/ooc-forge-model-install.service
-install -m 0644 "$SOURCE_DIR/systemd/ooc-forge-upscale-model-install.service" /etc/systemd/system/ooc-forge-upscale-model-install.service
+for unit in \
+  ooc-forge-git-update \
+  ooc-forge-model-install \
+  ooc-forge-upscale-model-install \
+  ooc-forge-prompt-model-install \
+  ooc-forge-video-model-install; do
+  install -m 0644 "$SOURCE_DIR/systemd/$unit.service" "/etc/systemd/system/$unit.service"
+done
 install -m 0440 "$SOURCE_DIR/systemd/ooc-forge-maintenance.sudoers" /etc/sudoers.d/ooc-forge-maintenance
 install -m 0755 "$SOURCE_DIR/scripts/ooc-forge-git-update" /usr/local/sbin/ooc-forge-git-update
 install -m 0755 "$SOURCE_DIR/scripts/ooc-forge-model-install" /usr/local/sbin/ooc-forge-model-install
 install -m 0755 "$SOURCE_DIR/scripts/ooc-forge-upscale-model-install" /usr/local/sbin/ooc-forge-upscale-model-install
+install -m 0755 "$SOURCE_DIR/scripts/ooc-forge-prompt-model-install" /usr/local/sbin/ooc-forge-prompt-model-install
+install -m 0755 "$SOURCE_DIR/scripts/ooc-forge-video-model-install" /usr/local/sbin/ooc-forge-video-model-install
 install -m 0755 "$SOURCE_DIR/scripts/ooc-forge-appliance-policy" /usr/local/sbin/ooc-forge-appliance-policy
 install -m 0755 "$SOURCE_DIR/scripts/ooc-forge-gpu-init" /usr/local/sbin/ooc-forge-gpu-init
 
-# The RTX 3090 reference appliance uses the proprietary NVIDIA driver. Nouveau
-# claiming the GPU first leaves nvidia-smi unable to communicate with it, so the
-# conflict is resolved in the image rather than by post-install shell repair.
 install -d -m 0755 /etc/modprobe.d
 cat > /etc/modprobe.d/blacklist-nouveau.conf <<'EOF'
 blacklist nouveau
 options nouveau modeset=0
 EOF
 
-# Prove that DKMS installed both the core NVIDIA driver and UVM for every kernel
-# carried in the image, then rebuild initramfs with the Nouveau blacklist.
 for module_dir in /lib/modules/*; do
   [ -d "$module_dir" ] || continue
   kernel=$(basename "$module_dir")
@@ -105,10 +106,10 @@ if ! find /lib/modules -type f \( -name 'nvidia-current-uvm.ko*' -o -name 'nvidi
 fi
 update-initramfs -u -k all
 
-# Bundle the pinned ComfyUI + PyTorch CUDA runtime. Model weights remain separate
-# persistent Forge Data and are not baked into the base image. Curated image and
-# print models can be installed later from the Forge Models page.
+# Bundle immutable execution runtimes. Creative model weights remain outside the
+# ISO and are checksum-verified into persistent Forge Data after admin approval.
 "$SOURCE_DIR/scripts/install-comfyui-runtime"
+"$SOURCE_DIR/scripts/install-prompt-runtime"
 
 rm -f /etc/nginx/sites-enabled/default
 install -m 0644 "$SOURCE_DIR/nginx/ooc-forge.conf" /etc/nginx/sites-available/ooc-forge
@@ -121,9 +122,6 @@ else
   printf '127.0.1.1\tforge\n' >> /etc/hosts
 fi
 
-# Never ship live-build's SSH host identity into installed appliances. The
-# appliance-policy service runs before ssh.service and creates unique keys with
-# ssh-keygen -A on each installation's first boot.
 rm -f /etc/ssh/ssh_host_*
 
 systemctl enable ooc-forge-appliance-policy.service
@@ -139,11 +137,6 @@ systemctl enable ooc-forge-web.service
 systemctl enable ooc-forge-worker.service
 systemctl enable ooc-forge-sync.service
 
-# This marker makes the ISO's UEFI boot test observable over a serial console.
-# It only runs on the live image, whose kernel command line carries the matching
-# flag; an installed appliance does not emit the marker. Being WantedBy the
-# multi-user target is sufficient; ordering it After the same target creates an
-# avoidable target/service ordering cycle.
 cat > /etc/systemd/system/ooc-forge-boot-smoke.service <<'UNIT'
 [Unit]
 Description=Signal that the OOC Forge live image reached multi-user boot
@@ -159,5 +152,4 @@ WantedBy=multi-user.target
 UNIT
 systemctl enable ooc-forge-boot-smoke.service
 
-# Git and model installers are intentionally not enabled on timers. They are
-# on-demand, admin-confirmed maintenance actions started from the Forge UI.
+# Git/model installers remain on-demand; none is enabled at boot.
