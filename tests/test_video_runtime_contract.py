@@ -20,7 +20,9 @@ def test_prompt_compiler_runtime_is_pinned_and_cpu_only():
     pins = read("scripts/prompt-runtime.env")
     assert "LLAMA_CPP_VERSION=v0.4.0" in pins
     assert "LLAMA_CPP_COMMIT=427291b5b34cd914a31b3fd3b61a68f6184f4b9f" in pins
-    installer = read("scripts/install-prompt-runtime")
+    installer_path = ROOT / "scripts/install-prompt-runtime"
+    assert installer_path.stat().st_mode & 0o111
+    installer = installer_path.read_text(encoding="utf-8")
     assert "GGML_CUDA=OFF" in installer
     assert "--target llama-cli" in installer
     assert "/usr/local/bin/ooc-llama-cli" in installer
