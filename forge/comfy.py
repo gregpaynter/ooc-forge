@@ -18,6 +18,7 @@ class ComfyError(RuntimeError):
 
 CHECKPOINT_EXTENSIONS = {".safetensors", ".ckpt", ".pt", ".pth"}
 UPSCALE_MODEL_EXTENSIONS = {".safetensors", ".pt", ".pth"}
+MODEL_EXTENSIONS = {".safetensors", ".ckpt", ".pt", ".pth", ".bin"}
 
 
 def _installed_models(root: Path, extensions: set[str]) -> list[str]:
@@ -36,6 +37,10 @@ def installed_checkpoints(config: Config) -> list[str]:
 
 def installed_upscale_models(config: Config) -> list[str]:
     return _installed_models(config.data_root / "models" / "upscale_models", UPSCALE_MODEL_EXTENSIONS)
+
+
+def installed_model_files(config: Config, category: str) -> list[str]:
+    return _installed_models(config.data_root / "models" / category, MODEL_EXTENSIONS)
 
 
 def _nodes(workflow: dict[str, Any], class_type: str) -> list[dict[str, Any]]:
@@ -112,6 +117,25 @@ def _apply_upscale_model(config: Config, workflow: dict[str, Any], request: dict
 
     for node in nodes:
         node.setdefault("inputs", {})["model_name"] = selected
+
+
+def _validate_loader_models(config: Config, workflow: dict[str, Any]) -> None:
+    requirements = (
+        ("UNETLoader", "unet_name", "diffusion_models"),
+        ("CLIPLoader", "clip_name", "text_encoders"),
+        ("VAELoader", "vae_name", "vae"),
+    )
+    missing: list[str] = []
+    for class_type, input_name, category in requirements:
+        installed = set(installed_model_files(config, category))
+        for node in _nodes(workflow, class_type):
+            filename = str(node.get("inputs", {}).get(input_name) or "").strip()
+            if filename and filename not in installed:
+                missing.append(f"{category}/{filename}")
+    if missing:
+        raise ComfyError(
+            "Required workflow model files are not installed: " + ", ".join(sorted(set(missing)))
+        )
 
 
 class ComfyClient:
@@ -203,6 +227,7 @@ def load_workflow(config: Config, workflow_id: str, request: dict[str, Any]) -> 
         node["inputs"][str(binding["input"])] = value
     _apply_checkpoint(config, workflow, request)
     _apply_upscale_model(config, workflow, request)
+    _validate_loader_models(config, workflow)
     return workflow, manifest
 
 
@@ -211,7 +236,7 @@ def output_references(history: dict[str, Any]) -> list[dict[str, Any]]:
     for output in (history.get("outputs") or {}).values():
         if not isinstance(output, dict):
             continue
-        for key in ("images", "gifs", "audio"):
+        for key in ("images", "videos", "gifs", "audio"):
             values = output.get(key)
             if not isinstance(values, list):
                 continue
