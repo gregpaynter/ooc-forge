@@ -1,0 +1,10 @@
+{
+  "id": "print-upscale",
+  "version": "1",
+  "output_kind": "print_work",
+  "scale": 4,
+  "bindings": [
+    {"source": "input_image", "node": "1", "input": "image"},
+    {"source": "upscale_model", "node": "2", "input": "model_name", "default": "RealESRGAN_x4plus.pth"}
+  ]
+}
