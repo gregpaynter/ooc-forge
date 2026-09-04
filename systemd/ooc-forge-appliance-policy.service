@@ -1,7 +1,7 @@
 [Unit]
 Description=Apply OOC Forge installed-appliance base policy
 After=local-fs.target
-Before=NetworkManager.service ooc-forge-init.service
+Before=NetworkManager.service ssh.service ooc-forge-init.service
 
 [Service]
 Type=oneshot

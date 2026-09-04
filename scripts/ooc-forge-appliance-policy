@@ -5,6 +5,11 @@ STATE_DIR=/var/lib/ooc-forge
 MARKER="$STATE_DIR/appliance-policy-v1"
 mkdir -p "$STATE_DIR"
 
+# SSH host keys are deliberately removed from the built image so every installed
+# appliance creates its own identity rather than inheriting keys from live-build.
+mkdir -p /etc/ssh
+ssh-keygen -A
+
 if [ -e "$MARKER" ]; then
   exit 0
 fi

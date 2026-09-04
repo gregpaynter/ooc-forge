@@ -125,10 +125,15 @@ jobs:
           unsquashfs -cat "$run_dir/filesystem.squashfs" /etc/ooc-forge/comfyui-runtime.env | grep -Fxq 'PYTORCH_CUDA_VERSION=12.6'
           unsquashfs -cat "$run_dir/filesystem.squashfs" /etc/modprobe.d/blacklist-nouveau.conf | grep -Fxq 'blacklist nouveau'
           unsquashfs -cat "$run_dir/filesystem.squashfs" /etc/systemd/system/comfyui.service | grep -Fq -- '--listen 127.0.0.1 --port 8188'
+          unsquashfs -cat "$run_dir/filesystem.squashfs" /usr/local/sbin/ooc-forge-appliance-policy | grep -Fq 'ssh-keygen -A'
           unsquashfs -ll "$run_dir/filesystem.squashfs" | grep -Fq '/opt/ComfyUI/main.py'
           unsquashfs -ll "$run_dir/filesystem.squashfs" | grep -Fq '/opt/ComfyUI/.venv/bin/python'
           unsquashfs -ll "$run_dir/filesystem.squashfs" | grep -Fq '/usr/sbin/sshd'
           unsquashfs -ll "$run_dir/filesystem.squashfs" | grep -Eq '/lib/modules/.*/updates/dkms/(nvidia-current|nvidia)\.ko'
+          if unsquashfs -ll "$run_dir/filesystem.squashfs" | grep -Eq '/etc/ssh/ssh_host_(rsa|ecdsa|ed25519)_key$'; then
+            echo 'Built ISO must not contain reusable SSH host private keys.' >&2
+            exit 1
+          fi
 
       - name: Boot ISO as UEFI USB mass storage
         run: bash ./iso/qemu-uefi-smoke.sh dist/ooc-forge-*.iso

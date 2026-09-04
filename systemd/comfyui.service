@@ -9,6 +9,9 @@ Type=simple
 User=forge
 Group=forge
 EnvironmentFile=-/etc/ooc-forge/forge.env
+Environment=XDG_CACHE_HOME=/forge-data/cache
+Environment=HF_HOME=/forge-data/cache/huggingface
+Environment=TORCH_HOME=/forge-data/cache/torch
 WorkingDirectory=/opt/ComfyUI
 ExecStart=/opt/ComfyUI/.venv/bin/python /opt/ComfyUI/main.py --listen 127.0.0.1 --port 8188 --input-directory /forge-data/comfyui-input --output-directory /forge-data/comfyui-output --temp-directory /forge-data/comfyui-temp --user-directory /forge-data/comfyui-user --extra-model-paths-config /etc/ooc-forge/comfyui-model-paths.yaml
 Restart=on-failure

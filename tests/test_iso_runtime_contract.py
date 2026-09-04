@@ -43,6 +43,7 @@ def test_comfyui_remains_local_and_uses_persistent_forge_data():
         "/forge-data/comfyui-output",
         "/forge-data/comfyui-temp",
         "/forge-data/comfyui-user",
+        "XDG_CACHE_HOME=/forge-data/cache",
     ):
         assert path in service
 
@@ -64,8 +65,13 @@ def test_iso_owns_driver_ssh_apt_and_network_recovery():
     assert "update-initramfs -u -k all" in hook
     assert "systemctl enable ssh.service" in hook
     assert "systemctl enable comfyui.service" in hook
+    assert "rm -f /etc/ssh/ssh_host_*" in hook
 
     policy = read("scripts/ooc-forge-appliance-policy")
+    assert "ssh-keygen -A" in policy
     assert "deb https://deb.debian.org/debian trixie" in policy
     assert "iface lo inet loopback" in policy
     assert "managed=true" in policy
+
+    policy_unit = read("systemd/ooc-forge-appliance-policy.service")
+    assert "Before=NetworkManager.service ssh.service" in policy_unit

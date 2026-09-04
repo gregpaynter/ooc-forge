@@ -96,6 +96,11 @@ ln -sfn /etc/nginx/sites-available/ooc-forge /etc/nginx/sites-enabled/ooc-forge
 
 echo forge > /etc/hostname
 
+# Never ship live-build's SSH host identity into installed appliances. The
+# appliance-policy service runs before ssh.service and creates unique keys with
+# ssh-keygen -A on each installation's first boot.
+rm -f /etc/ssh/ssh_host_*
+
 systemctl enable ooc-forge-appliance-policy.service
 systemctl enable NetworkManager.service
 systemctl enable avahi-daemon.service
