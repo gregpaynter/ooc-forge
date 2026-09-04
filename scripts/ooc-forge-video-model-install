@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+if [[ ${EUID:-$(id -u)} -ne 0 ]]; then
+  echo "Run as root." >&2
+  exit 1
+fi
+
+FORGE_USER=${FORGE_USER:-forge}
+FORGE_DATA_ROOT=${FORGE_DATA_ROOT:-/forge-data}
+STATUS="$FORGE_DATA_ROOT/maintenance/video-model-install-status.json"
+CACHE_ROOT="$FORGE_DATA_ROOT/cache/model-downloads/wan2.2-ti2v-5b"
+LAST_STATE=QUEUED
+
+FILES=(
+  'diffusion_models|wan2.2_ti2v_5B_fp16.safetensors|456f901338bd9eadbded3828b819109a9b68e8a525ca5cf8d0049a69fcfeca1e|https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/main/split_files/diffusion_models/wan2.2_ti2v_5B_fp16.safetensors?download=true'
+  'vae|wan2.2_vae.safetensors|e40321bd36b9709991dae2530eb4ac303dd168276980d3e9bc4b6e2b75fed156|https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/main/split_files/vae/wan2.2_vae.safetensors?download=true'
+  'text_encoders|umt5_xxl_fp8_e4m3fn_scaled.safetensors|c3355d30191f1f066b26d93fba017ae9809dce6c627dda5f6a66eaa651204f68|https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors?download=true'
+)
+
+write_status() {
+  local state=$1 message=$2 current=${3:-}
+  LAST_STATE=$state
+  install -d -o "$FORGE_USER" -g "$FORGE_USER" -m 0750 "$(dirname "$STATUS")"
+  python3 - "$STATUS" "$state" "$message" "$current" <<'PY'
+import json, os, sys
+from datetime import datetime, timezone
+from pathlib import Path
+p=Path(sys.argv[1]); value={"state":sys.argv[2],"message":sys.argv[3],"current_file":sys.argv[4] or None,"model":{"id":"wan2.2-ti2v-5b","name":"Wan2.2 TI2V 5B","license_url":"https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged"},"updated_at":datetime.now(timezone.utc).isoformat()}
+t=p.with_name(f".{p.name}.tmp"); t.write_text(json.dumps(value,indent=2)+"\n",encoding="utf-8"); os.chmod(t,0o644); t.replace(p)
+PY
+  chown "$FORGE_USER:$FORGE_USER" "$STATUS"
+}
+trap 'rc=$?; [[ "$LAST_STATE" == FAILED || "$LAST_STATE" == COMPLETED ]] || write_status FAILED "Wan2.2 video stack installation failed. Inspect journalctl -u ooc-forge-video-model-install.service."; exit $rc' ERR
+
+write_status QUEUED "Preparing the Wan2.2 TI2V 5B video model stack."
+install -d -o "$FORGE_USER" -g "$FORGE_USER" -m 0750 "$CACHE_ROOT"
+
+for spec in "${FILES[@]}"; do
+  IFS='|' read -r directory filename expected url <<<"$spec"
+  target_dir="$FORGE_DATA_ROOT/models/$directory"
+  target="$target_dir/$filename"
+  part="$CACHE_ROOT/$filename.part"
+  install -d -o "$FORGE_USER" -g "$FORGE_USER" -m 0750 "$target_dir"
+  if [[ -f "$target" ]]; then
+    [[ "$(sha256sum "$target" | awk '{print $1}')" == "$expected" ]] || { write_status FAILED "Existing $filename has an unexpected SHA-256." "$filename"; exit 1; }
+    continue
+  fi
+  write_status DOWNLOADING "Downloading Wan2.2 video component: $filename. Downloads are resumable." "$filename"
+  curl --fail --location --retry 5 --retry-delay 2 --retry-all-errors --continue-at - --output "$part" "$url" || { rm -f "$part"; curl --fail --location --retry 5 --retry-delay 2 --retry-all-errors --output "$part" "$url"; }
+  write_status VERIFYING "Verifying $filename against its pinned SHA-256." "$filename"
+  [[ "$(sha256sum "$part" | awk '{print $1}')" == "$expected" ]] || { rm -f "$part"; write_status FAILED "Downloaded $filename SHA-256 did not match." "$filename"; exit 1; }
+  write_status INSTALLING "Installing verified $filename into persistent Forge Data." "$filename"
+  chown "$FORGE_USER:$FORGE_USER" "$part"; chmod 0644 "$part"; mv "$part" "$target"
+done
+
+systemctl try-restart comfyui.service ooc-forge-worker.service >/dev/null 2>&1 || true
+write_status COMPLETED "Wan2.2 TI2V 5B video stack is installed."
+echo "Wan2.2 TI2V 5B model stack installed successfully."
