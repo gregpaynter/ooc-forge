@@ -18,6 +18,9 @@ REFERENCE_IMAGE_MODEL = {
     "license_url": "https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/blob/main/LICENSE.md",
 }
 
+BUSY_MODEL_STATES = {"QUEUED", "DOWNLOADING", "VERIFYING", "INSTALLING"}
+MODEL_INSTALL_SERVICE = "ooc-forge-model-install.service"
+
 
 def model_install_status(config: Config) -> dict[str, Any]:
     path = config.data_root / "maintenance" / "model-install-status.json"
@@ -30,12 +33,25 @@ def model_install_status(config: Config) -> dict[str, Any]:
     return value if isinstance(value, dict) else {"state": "UNKNOWN", "model": None}
 
 
+def model_install_running() -> bool:
+    try:
+        result = subprocess.run(
+            ["/usr/bin/systemctl", "is-active", "--quiet", MODEL_INSTALL_SERVICE],
+            check=False,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return result.returncode == 0
+
+
 def request_reference_model_install(config: Config) -> None:
     status = model_install_status(config)
-    if str(status.get("state") or "").upper() in {"QUEUED", "DOWNLOADING", "VERIFYING", "INSTALLING"}:
+    state = str(status.get("state") or "").upper()
+    if state in BUSY_MODEL_STATES and model_install_running():
         raise RuntimeError("Reference image model installation is already running.")
     subprocess.run(
-        ["sudo", "/usr/bin/systemctl", "start", "ooc-forge-model-install.service"],
+        ["sudo", "/usr/bin/systemctl", "start", MODEL_INSTALL_SERVICE],
         check=True,
         timeout=10,
     )
