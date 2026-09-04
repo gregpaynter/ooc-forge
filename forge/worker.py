@@ -5,7 +5,7 @@ import time
 
 from forge.config import Config
 from forge.db import claim_local_job, fail_job, finish_job, init_db
-from forge.executor import execute
+from forge.dispatch import execute
 from forge.storage import ensure_layout
 
 
