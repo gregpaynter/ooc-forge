@@ -47,6 +47,15 @@ ooc_forge:
 YAML
 chmod 0644 /etc/ooc-forge/comfyui-model-paths.yaml
 
+# Install immutable workflow definitions into persistent Forge Data. Models remain
+# separate, but a fresh ISO must still know both how to create a Study and how to
+# promote that Study into a printable Work once the required models are installed.
+for workflow in manual-image print-upscale; do
+  install -o "$FORGE_USER" -g "$FORGE_USER" -d "$FORGE_DATA/workflows/$workflow"
+  install -o "$FORGE_USER" -g "$FORGE_USER" -m 0644 "$SOURCE_DIR/workflows/$workflow/manifest.json" "$FORGE_DATA/workflows/$workflow/manifest.json"
+  install -o "$FORGE_USER" -g "$FORGE_USER" -m 0644 "$SOURCE_DIR/workflows/$workflow/workflow.json" "$FORGE_DATA/workflows/$workflow/workflow.json"
+done
+
 for unit in \
   ooc-forge-appliance-policy \
   ooc-forge-init \
@@ -59,9 +68,11 @@ for unit in \
 done
 install -m 0644 "$SOURCE_DIR/systemd/ooc-forge-git-update.service" /etc/systemd/system/ooc-forge-git-update.service
 install -m 0644 "$SOURCE_DIR/systemd/ooc-forge-model-install.service" /etc/systemd/system/ooc-forge-model-install.service
+install -m 0644 "$SOURCE_DIR/systemd/ooc-forge-upscale-model-install.service" /etc/systemd/system/ooc-forge-upscale-model-install.service
 install -m 0440 "$SOURCE_DIR/systemd/ooc-forge-maintenance.sudoers" /etc/sudoers.d/ooc-forge-maintenance
 install -m 0755 "$SOURCE_DIR/scripts/ooc-forge-git-update" /usr/local/sbin/ooc-forge-git-update
 install -m 0755 "$SOURCE_DIR/scripts/ooc-forge-model-install" /usr/local/sbin/ooc-forge-model-install
+install -m 0755 "$SOURCE_DIR/scripts/ooc-forge-upscale-model-install" /usr/local/sbin/ooc-forge-upscale-model-install
 install -m 0755 "$SOURCE_DIR/scripts/ooc-forge-appliance-policy" /usr/local/sbin/ooc-forge-appliance-policy
 install -m 0755 "$SOURCE_DIR/scripts/ooc-forge-gpu-init" /usr/local/sbin/ooc-forge-gpu-init
 
@@ -94,9 +105,9 @@ if ! find /lib/modules -type f \( -name 'nvidia-current-uvm.ko*' -o -name 'nvidi
 fi
 update-initramfs -u -k all
 
-# Bundle the pinned ComfyUI + PyTorch CUDA runtime. Models remain separate
-# persistent Forge Data and are not baked into the base image. The curated
-# reference model can be installed later from the Forge Models page.
+# Bundle the pinned ComfyUI + PyTorch CUDA runtime. Model weights remain separate
+# persistent Forge Data and are not baked into the base image. Curated image and
+# print models can be installed later from the Forge Models page.
 "$SOURCE_DIR/scripts/install-comfyui-runtime"
 
 rm -f /etc/nginx/sites-enabled/default
