@@ -1,0 +1,13 @@
+[Unit]
+Description=Initialise OOC Forge NVIDIA CUDA runtime
+After=local-fs.target systemd-modules-load.service nvidia-persistenced.service
+Wants=nvidia-persistenced.service
+Before=comfyui.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/ooc-forge-gpu-init
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
