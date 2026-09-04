@@ -9,6 +9,7 @@ import requests
 from forge import __version__
 from forge.comfy import installed_checkpoints, installed_upscale_models
 from forge.config import Config
+from forge.models import prompt_model_ready, video_model_ready
 
 
 def _gpu() -> dict[str, Any]:
@@ -68,12 +69,21 @@ def capabilities(config: Config) -> dict[str, Any]:
     print_workflow_ready = (config.workflows_root / "print-upscale" / "workflow.json").exists()
     print_model_ready = bool(installed_upscale_models(config))
     print_ready = image_ready and print_workflow_ready and print_model_ready
+    video_workflow_ready = (config.workflows_root / "video-wan22-ti2v" / "workflow.json").exists()
+    video_ready = (
+        image_ready
+        and video_workflow_ready
+        and video_model_ready(config)
+        and prompt_model_ready(config)
+        and shutil.which("ffmpeg") is not None
+    )
     return {
         "manual_create": image_ready,
         "comfyui": True,
         "image": image_ready,
         "web_thumbnail": thumbnail_ready,
         "print_work": print_ready,
-        "video": False,
+        "video": video_ready,
+        "video_mobile": video_ready,
         "audio": False,
     }
