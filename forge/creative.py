@@ -71,12 +71,12 @@ def promote_seed_work(
     destination_root.mkdir(parents=True, exist_ok=True)
     suffix = source.suffix.lower() or ".png"
     seed_work = destination_root / f"seed-work{suffix}"
-    temp_seed = destination_root / f".seed-work{suffix}.tmp"
+    temp_seed = destination_root / f".seed-work.tmp{suffix}"
     shutil.copy2(source, temp_seed)
     temp_seed.replace(seed_work)
 
     thumbnail = destination_root / "thumbnail.webp"
-    temp_thumbnail = destination_root / ".thumbnail.webp.tmp"
+    temp_thumbnail = destination_root / ".thumbnail.tmp.webp"
     subprocess.run(
         [
             "ffmpeg",
