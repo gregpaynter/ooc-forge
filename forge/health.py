@@ -7,6 +7,7 @@ from typing import Any
 import requests
 
 from forge import __version__
+from forge.comfy import installed_checkpoints
 from forge.config import Config
 
 
@@ -60,11 +61,12 @@ def report(config: Config) -> dict[str, Any]:
 
 
 def capabilities(config: Config) -> dict[str, Any]:
-    # v1 advertises what the appliance runtime can execute; installed workflows may narrow this later.
+    workflow_ready = (config.workflows_root / "manual-image" / "workflow.json").exists()
+    model_ready = bool(installed_checkpoints(config))
     return {
         "manual_create": True,
         "comfyui": True,
-        "image": (config.workflows_root / "manual-image" / "workflow.json").exists(),
+        "image": workflow_ready and model_ready,
         "video": False,
         "audio": False,
     }
