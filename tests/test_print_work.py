@@ -21,25 +21,26 @@ def write_png(path, width: int, height: int) -> None:
 
 def test_print_master_png_is_tagged_300_dpi_without_changing_dimensions(tmp_path):
     path = tmp_path / "print-master.png"
-    write_png(path, 4096, 4096)
+    write_png(path, 16, 16)
 
     _tag_png_dpi(path, PRINT_DPI)
 
-    assert _png_dimensions(path) == (4096, 4096)
+    assert _png_dimensions(path) == (16, 16)
     data = path.read_bytes()
     marker = data.index(b"pHYs")
     payload = data[marker + 4 : marker + 13]
     x_ppm, y_ppm, unit = struct.unpack(">IIB", payload)
     assert unit == 1
     assert x_ppm == y_ppm == 11811
+    # The default 1024px SDXL Study becomes a 4096px 4x Work master.
     assert round((4096 / PRINT_DPI) * 25.4, 1) == 346.8
 
 
 def test_retagging_png_replaces_existing_phys_chunk(tmp_path):
     path = tmp_path / "print-master.png"
-    write_png(path, 1024, 768)
+    write_png(path, 32, 24)
     _tag_png_dpi(path, 150)
     _tag_png_dpi(path, 300)
 
     assert path.read_bytes().count(b"pHYs") == 1
-    assert _png_dimensions(path) == (1024, 768)
+    assert _png_dimensions(path) == (32, 24)
