@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import subprocess
-from pathlib import Path
 from typing import Any
 
 from forge.config import Config
@@ -12,9 +11,10 @@ REFERENCE_IMAGE_MODEL = {
     "id": "sdxl-base-1.0",
     "name": "Stable Diffusion XL Base 1.0",
     "filename": "sd_xl_base_1.0.safetensors",
-    "size_bytes": 6_939_102_400,
+    "size_label": "about 6.94 GB",
     "sha256": "31e35c80fc4829d14f90153f4c74cd59c90b779f6afe05a74cd6120b893f7e5b",
     "source_url": "https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/resolve/main/sd_xl_base_1.0.safetensors?download=true",
+    "repository_url": "https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0",
     "license_url": "https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/blob/main/LICENSE.md",
 }
 
