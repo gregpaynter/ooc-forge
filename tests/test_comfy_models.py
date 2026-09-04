@@ -4,7 +4,13 @@ import json
 
 import pytest
 
-from forge.comfy import ComfyClient, ComfyError, installed_checkpoints, load_workflow
+from forge.comfy import (
+    ComfyClient,
+    ComfyError,
+    installed_checkpoints,
+    installed_upscale_models,
+    load_workflow,
+)
 from forge.config import Config
 from forge.health import capabilities
 
@@ -19,7 +25,7 @@ def make_config(tmp_path, *, default_checkpoint=None):
     )
 
 
-def install_workflow(config: Config) -> None:
+def install_image_workflow(config: Config) -> None:
     root = config.workflows_root / "manual-image"
     root.mkdir(parents=True)
     (root / "workflow.json").write_text(
@@ -50,6 +56,38 @@ def install_workflow(config: Config) -> None:
     )
 
 
+def install_print_workflow(config: Config) -> None:
+    root = config.workflows_root / "print-upscale"
+    root.mkdir(parents=True)
+    (root / "workflow.json").write_text(
+        json.dumps(
+            {
+                "1": {"inputs": {"image": "study.png"}, "class_type": "LoadImage"},
+                "2": {
+                    "inputs": {"model_name": "RealESRGAN_x4plus.pth"},
+                    "class_type": "UpscaleModelLoader",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    (root / "manifest.json").write_text(
+        json.dumps(
+            {
+                "id": "print-upscale",
+                "version": "1",
+                "output_kind": "print_work",
+                "scale": 4,
+                "bindings": [
+                    {"source": "input_image", "node": "1", "input": "image"},
+                    {"source": "upscale_model", "node": "2", "input": "model_name"},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
 def test_installed_checkpoints_discovers_nested_models(tmp_path):
     config = make_config(tmp_path)
     root = tmp_path / "models" / "checkpoints"
@@ -60,9 +98,19 @@ def test_installed_checkpoints_discovers_nested_models(tmp_path):
     assert installed_checkpoints(config) == ["sdxl/base.safetensors"]
 
 
+def test_installed_upscale_models_discovers_print_models(tmp_path):
+    config = make_config(tmp_path)
+    root = tmp_path / "models" / "upscale_models"
+    root.mkdir(parents=True)
+    (root / "RealESRGAN_x4plus.pth").write_bytes(b"model")
+    (root / "notes.txt").write_text("ignore", encoding="utf-8")
+
+    assert installed_upscale_models(config) == ["RealESRGAN_x4plus.pth"]
+
+
 def test_load_workflow_fails_clearly_without_model(tmp_path):
     config = make_config(tmp_path)
-    install_workflow(config)
+    install_image_workflow(config)
 
     with pytest.raises(ComfyError, match="No image checkpoint is installed/selected"):
         load_workflow(config, "manual-image", {"prompt": "test"})
@@ -70,7 +118,7 @@ def test_load_workflow_fails_clearly_without_model(tmp_path):
 
 def test_load_workflow_uses_only_installed_checkpoint(tmp_path):
     config = make_config(tmp_path)
-    install_workflow(config)
+    install_image_workflow(config)
     root = tmp_path / "models" / "checkpoints"
     root.mkdir(parents=True)
     (root / "model.safetensors").write_bytes(b"model")
@@ -82,7 +130,7 @@ def test_load_workflow_uses_only_installed_checkpoint(tmp_path):
 
 def test_load_workflow_rejects_uninstalled_selected_checkpoint(tmp_path):
     config = make_config(tmp_path)
-    install_workflow(config)
+    install_image_workflow(config)
     root = tmp_path / "models" / "checkpoints"
     root.mkdir(parents=True)
     (root / "installed.safetensors").write_bytes(b"model")
@@ -95,19 +143,41 @@ def test_load_workflow_rejects_uninstalled_selected_checkpoint(tmp_path):
         )
 
 
-def test_image_and_manual_create_capabilities_require_workflow_and_checkpoint(tmp_path):
+def test_print_workflow_requires_installed_upscale_model(tmp_path):
     config = make_config(tmp_path)
-    install_workflow(config)
+    install_print_workflow(config)
+
+    with pytest.raises(ComfyError, match="No print upscale model is installed/selected"):
+        load_workflow(config, "print-upscale", {"input_image": "study.png"})
+
+    root = tmp_path / "models" / "upscale_models"
+    root.mkdir(parents=True)
+    (root / "RealESRGAN_x4plus.pth").write_bytes(b"model")
+    workflow, _ = load_workflow(config, "print-upscale", {"input_image": "study.png"})
+    assert workflow["2"]["inputs"]["model_name"] == "RealESRGAN_x4plus.pth"
+
+
+def test_capabilities_separate_image_from_print_work(tmp_path):
+    config = make_config(tmp_path)
+    install_image_workflow(config)
+    install_print_workflow(config)
     value = capabilities(config)
     assert value["image"] is False
     assert value["manual_create"] is False
+    assert value["print_work"] is False
 
-    root = tmp_path / "models" / "checkpoints"
-    root.mkdir(parents=True)
-    (root / "model.safetensors").write_bytes(b"model")
+    checkpoints = tmp_path / "models" / "checkpoints"
+    checkpoints.mkdir(parents=True)
+    (checkpoints / "model.safetensors").write_bytes(b"model")
     value = capabilities(config)
     assert value["image"] is True
     assert value["manual_create"] is True
+    assert value["print_work"] is False
+
+    upscale = tmp_path / "models" / "upscale_models"
+    upscale.mkdir(parents=True)
+    (upscale / "RealESRGAN_x4plus.pth").write_bytes(b"model")
+    assert capabilities(config)["print_work"] is True
 
 
 def test_queue_preserves_comfyui_validation_error(monkeypatch, tmp_path):
