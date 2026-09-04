@@ -114,6 +114,41 @@ def test_reference_image_model_is_separate_verified_and_appliance_managed():
     assert "systemctl enable ooc-forge-model-install.service" not in hook
 
 
+def test_printable_work_pipeline_is_appliance_owned_and_model_verified():
+    workflow = read("workflows/print-upscale/workflow.json")
+    manifest = read("workflows/print-upscale/manifest.json")
+    assert '"class_type": "UpscaleModelLoader"' in workflow
+    assert '"class_type": "ImageUpscaleWithModel"' in workflow
+    assert '"model_name": "RealESRGAN_x4plus.pth"' in workflow
+    assert '"scale": 4' in manifest
+    assert '"output_kind": "print_work"' in manifest
+
+    script = read("scripts/ooc-forge-upscale-model-install")
+    assert "RealESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth" in script
+    assert "4fa0d38905f75ac06eb49a7951b426670021be3018265fd191d2125df9d682f1" in script
+    assert 'MODEL_DIR="$FORGE_DATA_ROOT/models/upscale_models"' in script
+    assert "--continue-at -" in script
+    assert "sha256sum" in script
+
+    service = read("systemd/ooc-forge-upscale-model-install.service")
+    assert "ExecStart=/usr/local/sbin/ooc-forge-upscale-model-install" in service
+    assert "TimeoutStartSec=infinity" in service
+
+    sudoers = read("systemd/ooc-forge-maintenance.sudoers")
+    assert "systemctl --no-block start ooc-forge-upscale-model-install.service" in sudoers
+
+    installer = read("scripts/install-local.sh")
+    assert "for workflow in manual-image print-upscale" in installer
+    assert "ooc-forge-upscale-model-install.service" in installer
+    assert "scripts/ooc-forge-upscale-model-install" in installer
+
+    hook = read("iso/config/hooks/live/010-ooc-forge-runtime.hook.chroot")
+    assert "for workflow in manual-image print-upscale" in hook
+    assert "ooc-forge-upscale-model-install.service" in hook
+    assert "scripts/ooc-forge-upscale-model-install" in hook
+    assert "systemctl enable ooc-forge-upscale-model-install.service" not in hook
+
+
 def test_iso_owns_driver_ssh_apt_network_and_gpu_recovery():
     packages = read("iso/config/package-lists/forge.list.chroot").splitlines()
     for package in (
