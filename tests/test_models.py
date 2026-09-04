@@ -58,24 +58,28 @@ def test_model_install_running_uses_systemd_state(monkeypatch):
     assert model_install_running() is True
 
 
-def test_request_reference_model_install_starts_fixed_service(monkeypatch, tmp_path):
+def test_request_reference_model_install_starts_fixed_service_without_blocking(monkeypatch, tmp_path):
     config = make_config(tmp_path)
     calls = []
 
     def fake_run(command, **kwargs):
-        calls.append(command)
+        calls.append((command, kwargs))
         if command[:3] == ["/usr/bin/systemctl", "is-active", "--quiet"]:
             return SimpleNamespace(returncode=3)
         return SimpleNamespace(returncode=0)
 
     monkeypatch.setattr("forge.models.subprocess.run", fake_run)
     request_reference_model_install(config)
-    assert calls[-1] == [
+    command, kwargs = calls[-1]
+    assert command == [
         "sudo",
         "/usr/bin/systemctl",
+        "--no-block",
         "start",
         "ooc-forge-model-install.service",
     ]
+    assert kwargs["check"] is True
+    assert kwargs["timeout"] == 10
 
 
 def test_request_reference_model_install_rejects_live_duplicate(monkeypatch, tmp_path):
