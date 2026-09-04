@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
 import subprocess
@@ -15,6 +16,14 @@ from forge.db import (
     list_session_jobs,
     set_session_seed,
 )
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
 
 
 def _safe_library_path(config: Config, relative_path: str) -> Path:
@@ -103,15 +112,24 @@ def promote_seed_work(
 
     seed_ref = seed_work.relative_to(config.data_root).as_posix()
     thumbnail_ref = thumbnail.relative_to(config.data_root).as_posix()
+    seed_sha256 = _sha256(seed_work)
+    thumbnail_sha256 = _sha256(thumbnail)
     set_session_seed(
         config,
         session_id,
         source_job_id=source_job_id,
         source_ref=source_ref,
         seed_work_ref=seed_ref,
+        seed_work_sha256=seed_sha256,
         thumbnail_ref=thumbnail_ref,
+        thumbnail_sha256=thumbnail_sha256,
     )
-    return {"seed_work_ref": seed_ref, "thumbnail_ref": thumbnail_ref}
+    return {
+        "seed_work_ref": seed_ref,
+        "seed_work_sha256": seed_sha256,
+        "thumbnail_ref": thumbnail_ref,
+        "thumbnail_sha256": thumbnail_sha256,
+    }
 
 
 def delete_job_and_files(config: Config, job_id: str) -> None:
