@@ -34,6 +34,13 @@ def _safe_library_path(config: Config, relative_path: str) -> Path:
     return candidate
 
 
+def _safe_remove_tree(config: Config, path: Path) -> None:
+    root = config.library_root.resolve()
+    candidate = path.resolve()
+    if root in candidate.parents and candidate.exists():
+        shutil.rmtree(candidate)
+
+
 def _job_assets(row: Any) -> list[dict[str, Any]]:
     if not row or not row["result_json"]:
         return []
@@ -147,11 +154,10 @@ def delete_job_and_files(config: Config, job_id: str) -> None:
         except RuntimeError:
             continue
         path.unlink(missing_ok=True)
-        parent = path.parent
-        try:
-            parent.rmdir()
-        except OSError:
-            pass
+    _safe_remove_tree(config, config.library_root / "experiences" / job_id)
+    study_root = config.library_root / "studies" / job_id
+    if study_root.exists():
+        _safe_remove_tree(config, study_root)
     delete_job_record(config, job_id)
 
 
@@ -172,14 +178,10 @@ def delete_session_and_files(config: Config, session_id: str) -> None:
                 except RuntimeError:
                     pass
 
-    work_root = (config.library_root / "works" / session_id).resolve()
-    library = config.library_root.resolve()
-    if library in work_root.parents and work_root.exists():
-        shutil.rmtree(work_root)
-
+    _safe_remove_tree(config, config.library_root / "works" / session_id)
     for row in jobs:
-        study_root = (config.library_root / "studies" / str(row["id"])).resolve()
-        if library in study_root.parents and study_root.exists():
-            shutil.rmtree(study_root)
+        job_id = str(row["id"])
+        _safe_remove_tree(config, config.library_root / "studies" / job_id)
+        _safe_remove_tree(config, config.library_root / "experiences" / job_id)
 
     delete_creative_session_record(config, session_id)
