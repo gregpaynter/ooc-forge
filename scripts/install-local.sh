@@ -10,9 +10,19 @@ SOURCE_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 FORGE_USER=${FORGE_USER:-forge}
 FORGE_DATA=${FORGE_DATA:-/forge-data}
 FORGE_DEFAULT_CHECKPOINT=${FORGE_DEFAULT_CHECKPOINT:-}
-SOURCE_REF=${OOC_FORGE_SOURCE_REF:-}
-if [[ -z "$SOURCE_REF" ]]; then
-  SOURCE_REF=$(git -C "$SOURCE_DIR" rev-parse HEAD 2>/dev/null || printf 'local\n')
+
+# A local maintenance install must report the commit actually checked out in
+# SOURCE_DIR. OOC_FORGE_SOURCE_REF remains useful for non-Git/ISO build inputs,
+# but it must never override a real Git checkout and silently produce stale
+# provenance.
+GIT_SOURCE_REF=$(git -C "$SOURCE_DIR" rev-parse HEAD 2>/dev/null || true)
+if [[ -n "$GIT_SOURCE_REF" ]]; then
+  SOURCE_REF=$GIT_SOURCE_REF
+  if [[ -n "${OOC_FORGE_SOURCE_REF:-}" && "$OOC_FORGE_SOURCE_REF" != "$GIT_SOURCE_REF" ]]; then
+    echo "Ignoring stale OOC_FORGE_SOURCE_REF=$OOC_FORGE_SOURCE_REF; local checkout is $GIT_SOURCE_REF" >&2
+  fi
+else
+  SOURCE_REF=${OOC_FORGE_SOURCE_REF:-local}
 fi
 
 apt-get update

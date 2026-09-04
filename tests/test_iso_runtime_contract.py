@@ -63,6 +63,15 @@ def test_gpu_bootstrap_proves_uvm_and_real_cuda_allocation():
     assert "ExecStart=/usr/local/sbin/ooc-forge-gpu-init" in service
 
 
+def test_local_installer_uses_real_git_head_for_source_provenance():
+    installer = read("scripts/install-local.sh")
+    assert 'GIT_SOURCE_REF=$(git -C "$SOURCE_DIR" rev-parse HEAD' in installer
+    assert 'SOURCE_REF=$GIT_SOURCE_REF' in installer
+    assert "Ignoring stale OOC_FORGE_SOURCE_REF=" in installer
+    assert 'SOURCE_REF=${OOC_FORGE_SOURCE_REF:-local}' in installer
+    assert "printf '%s\\n' \"$SOURCE_REF\" > /opt/ooc-forge/.ooc-source-ref" in installer
+
+
 def test_iso_owns_driver_ssh_apt_network_and_gpu_recovery():
     packages = read("iso/config/package-lists/forge.list.chroot").splitlines()
     for package in (
