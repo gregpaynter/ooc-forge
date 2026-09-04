@@ -1,7 +1,7 @@
 [Unit]
 Description=ComfyUI runtime for OOC Forge
-After=ooc-forge-init.service nvidia-persistenced.service
-Requires=ooc-forge-init.service
+After=ooc-forge-init.service ooc-forge-gpu-init.service nvidia-persistenced.service
+Requires=ooc-forge-init.service ooc-forge-gpu-init.service
 Wants=nvidia-persistenced.service
 
 [Service]
@@ -13,6 +13,9 @@ Environment=XDG_CACHE_HOME=/forge-data/cache
 Environment=HF_HOME=/forge-data/cache/huggingface
 Environment=TORCH_HOME=/forge-data/cache/torch
 WorkingDirectory=/opt/ComfyUI
+# Keep the mutable ComfyUI layout idempotent even during source maintenance
+# installs where ooc-forge-init.service may already be active/RemainAfterExit.
+ExecStartPre=/opt/ooc-forge/.venv/bin/ooc-forge init
 ExecStart=/opt/ComfyUI/.venv/bin/python /opt/ComfyUI/main.py --listen 127.0.0.1 --port 8188 --input-directory /forge-data/comfyui-input --output-directory /forge-data/comfyui-output --temp-directory /forge-data/comfyui-temp --user-directory /forge-data/comfyui-user --extra-model-paths-config /etc/ooc-forge/comfyui-model-paths.yaml
 Restart=on-failure
 RestartSec=5

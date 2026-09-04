@@ -50,6 +50,7 @@ chmod 0644 /etc/ooc-forge/comfyui-model-paths.yaml
 for unit in \
   ooc-forge-appliance-policy \
   ooc-forge-init \
+  ooc-forge-gpu-init \
   ooc-forge-web \
   ooc-forge-worker \
   ooc-forge-sync \
@@ -60,6 +61,7 @@ install -m 0644 "$SOURCE_DIR/systemd/ooc-forge-git-update.service" /etc/systemd/
 install -m 0440 "$SOURCE_DIR/systemd/ooc-forge-maintenance.sudoers" /etc/sudoers.d/ooc-forge-maintenance
 install -m 0755 "$SOURCE_DIR/scripts/ooc-forge-git-update" /usr/local/sbin/ooc-forge-git-update
 install -m 0755 "$SOURCE_DIR/scripts/ooc-forge-appliance-policy" /usr/local/sbin/ooc-forge-appliance-policy
+install -m 0755 "$SOURCE_DIR/scripts/ooc-forge-gpu-init" /usr/local/sbin/ooc-forge-gpu-init
 
 # The RTX 3090 reference appliance uses the proprietary NVIDIA driver. Nouveau
 # claiming the GPU first leaves nvidia-smi unable to communicate with it, so the
@@ -70,8 +72,8 @@ blacklist nouveau
 options nouveau modeset=0
 EOF
 
-# Prove that a DKMS NVIDIA module exists for every kernel carried in the image,
-# then rebuild initramfs with the Nouveau blacklist included.
+# Prove that DKMS installed both the core NVIDIA driver and UVM for every kernel
+# carried in the image, then rebuild initramfs with the Nouveau blacklist.
 for module_dir in /lib/modules/*; do
   [ -d "$module_dir" ] || continue
   kernel=$(basename "$module_dir")
@@ -81,7 +83,11 @@ for module_dir in /lib/modules/*; do
   depmod -a "$kernel"
 done
 if ! find /lib/modules -type f \( -name 'nvidia-current.ko*' -o -name 'nvidia.ko*' \) -print -quit | grep -q .; then
-  echo "NVIDIA DKMS module was not installed into the Forge image" >&2
+  echo "NVIDIA DKMS core module was not installed into the Forge image" >&2
+  exit 1
+fi
+if ! find /lib/modules -type f \( -name 'nvidia-current-uvm.ko*' -o -name 'nvidia-uvm.ko*' -o -name 'nvidia_uvm.ko*' \) -print -quit | grep -q .; then
+  echo "NVIDIA DKMS UVM module was not installed into the Forge image" >&2
   exit 1
 fi
 update-initramfs -u -k all
@@ -95,6 +101,11 @@ install -m 0644 "$SOURCE_DIR/nginx/ooc-forge.conf" /etc/nginx/sites-available/oo
 ln -sfn /etc/nginx/sites-available/ooc-forge /etc/nginx/sites-enabled/ooc-forge
 
 echo forge > /etc/hostname
+if grep -q '^127\.0\.1\.1[[:space:]]' /etc/hosts; then
+  sed -i 's/^127\.0\.1\.1.*/127.0.1.1\tforge/' /etc/hosts
+else
+  printf '127.0.1.1\tforge\n' >> /etc/hosts
+fi
 
 # Never ship live-build's SSH host identity into installed appliances. The
 # appliance-policy service runs before ssh.service and creates unique keys with
@@ -108,6 +119,7 @@ systemctl enable nginx.service
 systemctl enable ssh.service
 systemctl enable nvidia-persistenced.service
 systemctl enable ooc-forge-init.service
+systemctl enable ooc-forge-gpu-init.service
 systemctl enable comfyui.service
 systemctl enable ooc-forge-web.service
 systemctl enable ooc-forge-worker.service

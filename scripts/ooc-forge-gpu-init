@@ -1,0 +1,75 @@
+#!/bin/sh
+set -eu
+
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+
+fail() {
+  echo "OOC Forge GPU bootstrap failed: $*" >&2
+  exit 1
+}
+
+command -v nvidia-smi >/dev/null 2>&1 || fail "nvidia-smi is unavailable"
+nvidia-smi -L >/dev/null 2>&1 || fail "NVIDIA driver cannot enumerate the reference GPU"
+
+# Debian renames the packaged UVM module to nvidia-current-uvm. Prefer that
+# concrete module name, then fall back to the upstream spellings used by other
+# NVIDIA packages.
+if ! grep -q '^nvidia_uvm ' /proc/modules 2>/dev/null; then
+  if modprobe nvidia-current-uvm 2>/dev/null; then
+    :
+  elif modprobe nvidia_uvm 2>/dev/null; then
+    :
+  elif modprobe nvidia-uvm 2>/dev/null; then
+    :
+  else
+    fail "NVIDIA UVM kernel module could not be loaded"
+  fi
+fi
+
+if command -v udevadm >/dev/null 2>&1; then
+  udevadm settle || true
+fi
+
+# Normally nvidia-modprobe/udev creates the UVM character devices. Some Debian
+# installs can have a valid DKMS UVM module without the device node, which leaves
+# nvidia-smi healthy while CUDA applications fail with an unknown error.
+if [ ! -c /dev/nvidia-uvm ] && command -v nvidia-modprobe >/dev/null 2>&1; then
+  nvidia-modprobe -u >/dev/null 2>&1 || true
+fi
+
+if [ ! -c /dev/nvidia-uvm ]; then
+  major=$(awk '$2 == "nvidia-uvm" { print $1; exit }' /proc/devices)
+  [ -n "$major" ] || fail "nvidia-uvm registered no character-device major"
+  rm -f /dev/nvidia-uvm
+  mknod /dev/nvidia-uvm c "$major" 0
+  chmod 0666 /dev/nvidia-uvm
+
+  if [ ! -c /dev/nvidia-uvm-tools ]; then
+    rm -f /dev/nvidia-uvm-tools
+    mknod /dev/nvidia-uvm-tools c "$major" 1
+    chmod 0666 /dev/nvidia-uvm-tools
+  fi
+fi
+
+PYTHON=/opt/ComfyUI/.venv/bin/python
+[ -x "$PYTHON" ] || fail "ComfyUI Python runtime is unavailable"
+
+"$PYTHON" - <<'PY'
+import torch
+
+if not torch.cuda.is_available():
+    raise SystemExit("PyTorch cannot initialise CUDA")
+if torch.cuda.device_count() < 1:
+    raise SystemExit("No CUDA device is available")
+# A real allocation proves more than enumeration and catches a missing UVM
+# device path before ComfyUI is allowed to start.
+tensor = torch.zeros(1, device="cuda")
+print(
+    "OOC Forge CUDA ready:",
+    torch.cuda.get_device_name(0),
+    f"torch={torch.__version__}",
+    f"cuda={torch.version.cuda}",
+    f"allocation={tensor.device}",
+)
+PY
