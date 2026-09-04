@@ -59,7 +59,7 @@ YAML
 
 install -o "$FORGE_USER" -g "$FORGE_USER" -d "$FORGE_DATA/workflows/manual-image"
 install -o "$FORGE_USER" -g "$FORGE_USER" -m 0644 "$SOURCE_DIR/workflows/manual-image/manifest.json" "$FORGE_DATA/workflows/manual-image/manifest.json"
-install -o "$FORGE_USER"" -g "$FORGE_USER" -m 0644 "$SOURCE_DIR/workflows/manual-image/workflow.json" "$FORGE_DATA/workflows/manual-image/workflow.json"
+install -o "$FORGE_USER" -g "$FORGE_USER" -m 0644 "$SOURCE_DIR/workflows/manual-image/workflow.json" "$FORGE_DATA/workflows/manual-image/workflow.json"
 
 # Use the exact same pinned execution payload as the appliance ISO.
 "$SOURCE_DIR/scripts/install-comfyui-runtime"
