@@ -8,7 +8,7 @@ import requests
 
 from forge import __version__
 from forge.config import Config
-from forge.executor import execute
+from forge.dispatch import execute
 from forge.health import capabilities, report
 from forge.storage import ensure_identity, ensure_layout, ensure_secrets, update_secrets
 
@@ -79,17 +79,20 @@ def _upload_assets(
                         str(asset.get("mime_type") or "application/octet-stream"),
                     )
                 },
-                timeout=120,
+                timeout=300,
             )
         response.raise_for_status()
         preview = response.json()
         if not isinstance(preview, dict):
             raise RuntimeError("OOC asset upload returned non-object JSON")
-        # Preserve Forge semantics alongside the OOC MediaAsset reference.
         preview["role"] = asset.get("role")
         preview["kind"] = asset.get("kind")
         if asset.get("print"):
             preview["print"] = asset["print"]
+        if asset.get("duration_seconds") is not None:
+            preview["duration_seconds"] = asset["duration_seconds"]
+        if asset.get("profile"):
+            preview["profile"] = asset["profile"]
         uploaded.append(preview)
     return uploaded
 
@@ -149,6 +152,16 @@ def _heartbeat_and_job(config: Config, secrets_value: dict[str, Any]) -> None:
                 result["print_media_asset_id"] = print_asset["media_asset_id"]
                 result["print_storage_ref"] = print_asset["storage_ref"]
                 result["print_sha256"] = print_asset["sha256"]
+            video_master = next((asset for asset in uploaded if asset.get("role") == "video_master"), None)
+            video_mobile = next((asset for asset in uploaded if asset.get("role") == "video_mobile"), None)
+            if video_master:
+                result["video_master_media_asset_id"] = video_master["media_asset_id"]
+                result["video_master_storage_ref"] = video_master["storage_ref"]
+                result["video_master_sha256"] = video_master["sha256"]
+            if video_mobile:
+                result["video_mobile_media_asset_id"] = video_mobile["media_asset_id"]
+                result["video_mobile_storage_ref"] = video_mobile["storage_ref"]
+                result["video_mobile_sha256"] = video_mobile["sha256"]
         _request(
             "POST",
             f"{origin}/api/forge/jobs/{remote_id}/complete",
@@ -159,7 +172,7 @@ def _heartbeat_and_job(config: Config, secrets_value: dict[str, Any]) -> None:
                 "candidate_description": result.get("description"),
                 "generation_evidence": generation_evidence,
             },
-            timeout=120,
+            timeout=300,
         )
     except Exception as error:
         try:
