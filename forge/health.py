@@ -63,10 +63,11 @@ def report(config: Config) -> dict[str, Any]:
 def capabilities(config: Config) -> dict[str, Any]:
     workflow_ready = (config.workflows_root / "manual-image" / "workflow.json").exists()
     model_ready = bool(installed_checkpoints(config))
+    image_ready = workflow_ready and model_ready
     return {
-        "manual_create": True,
+        "manual_create": image_ready,
         "comfyui": True,
-        "image": workflow_ready and model_ready,
+        "image": image_ready,
         "video": False,
         "audio": False,
     }

@@ -58,8 +58,10 @@ for unit in \
   install -m 0644 "$SOURCE_DIR/systemd/$unit.service" "/etc/systemd/system/$unit.service"
 done
 install -m 0644 "$SOURCE_DIR/systemd/ooc-forge-git-update.service" /etc/systemd/system/ooc-forge-git-update.service
+install -m 0644 "$SOURCE_DIR/systemd/ooc-forge-model-install.service" /etc/systemd/system/ooc-forge-model-install.service
 install -m 0440 "$SOURCE_DIR/systemd/ooc-forge-maintenance.sudoers" /etc/sudoers.d/ooc-forge-maintenance
 install -m 0755 "$SOURCE_DIR/scripts/ooc-forge-git-update" /usr/local/sbin/ooc-forge-git-update
+install -m 0755 "$SOURCE_DIR/scripts/ooc-forge-model-install" /usr/local/sbin/ooc-forge-model-install
 install -m 0755 "$SOURCE_DIR/scripts/ooc-forge-appliance-policy" /usr/local/sbin/ooc-forge-appliance-policy
 install -m 0755 "$SOURCE_DIR/scripts/ooc-forge-gpu-init" /usr/local/sbin/ooc-forge-gpu-init
 
@@ -93,7 +95,8 @@ fi
 update-initramfs -u -k all
 
 # Bundle the pinned ComfyUI + PyTorch CUDA runtime. Models remain separate
-# persistent Forge Data and are not baked into the base image.
+# persistent Forge Data and are not baked into the base image. The curated
+# reference model can be installed later from the Forge Models page.
 "$SOURCE_DIR/scripts/install-comfyui-runtime"
 
 rm -f /etc/nginx/sites-enabled/default
@@ -145,5 +148,5 @@ WantedBy=multi-user.target
 UNIT
 systemctl enable ooc-forge-boot-smoke.service
 
-# The Git updater is intentionally not enabled on a timer. It is an on-demand,
-# admin-confirmed Developer/Maintenance action started by the fixed sudoers rule.
+# Git and model installers are intentionally not enabled on timers. They are
+# on-demand, admin-confirmed maintenance actions started from the Forge UI.

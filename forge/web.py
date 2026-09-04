@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from functools import wraps
 from typing import Any
 
@@ -14,6 +15,12 @@ from forge.config import Config
 from forge.db import create_job, get_job, init_db, list_jobs, set_setting, setting
 from forge.health import capabilities, report
 from forge.maintenance import git_update_status, installed_source_ref, request_git_update
+from forge.models import (
+    REFERENCE_IMAGE_MODEL,
+    model_install_running,
+    model_install_status,
+    request_reference_model_install,
+)
 from forge.storage import (
     ensure_identity,
     ensure_layout,
@@ -117,7 +124,7 @@ def create_app() -> Flask:
             if not payload["prompt"]:
                 flash("Prompt is required.")
             elif not checkpoints:
-                flash("No image checkpoint is installed. Add one under /forge-data/models/checkpoints/ before generating.")
+                flash("No image checkpoint is installed. Install the reference model from Models before generating.")
             elif selected_checkpoint not in checkpoints:
                 flash("Select an installed image checkpoint.")
             else:
@@ -128,6 +135,40 @@ def create_app() -> Flask:
             checkpoints=checkpoints,
             selected_checkpoint=selected_checkpoint,
         )
+
+    @app.get("/models")
+    @login_required
+    def models():
+        checkpoints = installed_checkpoints(config)
+        return render_template(
+            "models.html",
+            checkpoints=checkpoints,
+            reference_model=REFERENCE_IMAGE_MODEL,
+            reference_installed=REFERENCE_IMAGE_MODEL["filename"] in checkpoints,
+            install_status=model_install_status(config),
+            install_running=model_install_running(),
+            capabilities=capabilities(config),
+        )
+
+    @app.post("/models/reference/install")
+    @login_required
+    def install_reference_model():
+        if request.form.get("accept_license") != "yes":
+            flash("Acknowledge the model licence before installation.")
+            return redirect(url_for("models"))
+        digest = setting(config, "admin_password_hash")
+        if not digest or not check_password_hash(digest, request.form.get("password", "")):
+            flash("Admin password is required to install the reference image model.")
+            return redirect(url_for("models"))
+        if REFERENCE_IMAGE_MODEL["filename"] in installed_checkpoints(config):
+            flash("The reference image model is already installed.")
+            return redirect(url_for("models"))
+        try:
+            request_reference_model_install(config)
+            flash("Reference image model installation started. Refresh Models to see status.")
+        except (RuntimeError, subprocess.SubprocessError) as error:
+            flash(f"Could not start model installation: {error}")
+        return redirect(url_for("models"))
 
     @app.get("/jobs")
     @login_required

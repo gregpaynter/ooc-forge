@@ -72,6 +72,34 @@ def test_local_installer_uses_real_git_head_for_source_provenance():
     assert "printf '%s\\n' \"$SOURCE_REF\" > /opt/ooc-forge/.ooc-source-ref" in installer
 
 
+def test_reference_image_model_is_separate_verified_and_appliance_managed():
+    script = read("scripts/ooc-forge-model-install")
+    assert "stabilityai/stable-diffusion-xl-base-1.0/resolve/main/sd_xl_base_1.0.safetensors" in script
+    assert "31e35c80fc4829d14f90153f4c74cd59c90b779f6afe05a74cd6120b893f7e5b" in script
+    assert 'CHECKPOINT_DIR="$FORGE_DATA_ROOT/models/checkpoints"' in script
+    assert "--continue-at -" in script
+    assert "sha256sum" in script
+    assert "Downloaded checkpoint SHA-256 did not match" in script
+    assert "FORGE_DEFAULT_CHECKPOINT=" in script
+
+    service = read("systemd/ooc-forge-model-install.service")
+    assert "After=network-online.target ooc-forge-init.service" in service
+    assert "ExecStart=/usr/local/sbin/ooc-forge-model-install" in service
+    assert "TimeoutStartSec=infinity" in service
+
+    sudoers = read("systemd/ooc-forge-maintenance.sudoers")
+    assert "systemctl start ooc-forge-model-install.service" in sudoers
+
+    installer = read("scripts/install-local.sh")
+    assert "ooc-forge-model-install.service" in installer
+    assert "scripts/ooc-forge-model-install" in installer
+
+    hook = read("iso/config/hooks/live/010-ooc-forge-runtime.hook.chroot")
+    assert "ooc-forge-model-install.service" in hook
+    assert "scripts/ooc-forge-model-install" in hook
+    assert "systemctl enable ooc-forge-model-install.service" not in hook
+
+
 def test_iso_owns_driver_ssh_apt_network_and_gpu_recovery():
     packages = read("iso/config/package-lists/forge.list.chroot").splitlines()
     for package in (

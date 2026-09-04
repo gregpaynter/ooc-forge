@@ -95,15 +95,19 @@ def test_load_workflow_rejects_uninstalled_selected_checkpoint(tmp_path):
         )
 
 
-def test_image_capability_requires_workflow_and_checkpoint(tmp_path):
+def test_image_and_manual_create_capabilities_require_workflow_and_checkpoint(tmp_path):
     config = make_config(tmp_path)
     install_workflow(config)
-    assert capabilities(config)["image"] is False
+    value = capabilities(config)
+    assert value["image"] is False
+    assert value["manual_create"] is False
 
     root = tmp_path / "models" / "checkpoints"
     root.mkdir(parents=True)
     (root / "model.safetensors").write_bytes(b"model")
-    assert capabilities(config)["image"] is True
+    value = capabilities(config)
+    assert value["image"] is True
+    assert value["manual_create"] is True
 
 
 def test_queue_preserves_comfyui_validation_error(monkeypatch, tmp_path):
