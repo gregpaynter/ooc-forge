@@ -50,7 +50,6 @@ CREATE TABLE IF NOT EXISTS jobs (
     completed_at TEXT
 );
 CREATE INDEX IF NOT EXISTS ix_jobs_status_created ON jobs(status, created_at);
-CREATE INDEX IF NOT EXISTS ix_jobs_session_created ON jobs(creative_session_id, created_at);
 
 CREATE TABLE IF NOT EXISTS assets (
     id TEXT PRIMARY KEY,
