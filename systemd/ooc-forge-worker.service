@@ -1,8 +1,7 @@
 [Unit]
 Description=OOC Forge local job worker
 After=ooc-forge-init.service comfyui.service
-Requires=ooc-forge-init.service
-Wants=comfyui.service
+Requires=ooc-forge-init.service comfyui.service
 
 [Service]
 Type=simple
