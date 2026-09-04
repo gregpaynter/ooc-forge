@@ -24,6 +24,7 @@ DATA_DIRS = (
     "models/controlnet",
     "models/upscale_models",
     "models/embeddings",
+    "models/llm",
     "workflows",
     "library/studies",
     "library/works",
