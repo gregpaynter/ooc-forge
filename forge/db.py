@@ -27,7 +27,9 @@ CREATE TABLE IF NOT EXISTS creative_sessions (
     seed_source_job_id TEXT,
     seed_source_ref TEXT,
     seed_work_ref TEXT,
+    seed_work_sha256 TEXT,
     thumbnail_ref TEXT,
+    thumbnail_sha256 TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -71,6 +73,11 @@ JOB_COLUMNS = {
     "derivative_type": "TEXT",
 }
 
+SESSION_COLUMNS = {
+    "seed_work_sha256": "TEXT",
+    "thumbnail_sha256": "TEXT",
+}
+
 
 def utc_now() -> str:
     return datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
@@ -86,13 +93,20 @@ def connect(config: Config) -> sqlite3.Connection:
 def init_db(config: Config) -> None:
     with connect(config) as connection:
         connection.executescript(SCHEMA)
-        existing = {
+        job_existing = {
             str(row["name"])
             for row in connection.execute("PRAGMA table_info(jobs)").fetchall()
         }
         for name, sql_type in JOB_COLUMNS.items():
-            if name not in existing:
+            if name not in job_existing:
                 connection.execute(f"ALTER TABLE jobs ADD COLUMN {name} {sql_type}")
+        session_existing = {
+            str(row["name"])
+            for row in connection.execute("PRAGMA table_info(creative_sessions)").fetchall()
+        }
+        for name, sql_type in SESSION_COLUMNS.items():
+            if name not in session_existing:
+                connection.execute(f"ALTER TABLE creative_sessions ADD COLUMN {name} {sql_type}")
         connection.execute(
             "CREATE INDEX IF NOT EXISTS ix_jobs_session_created "
             "ON jobs(creative_session_id, created_at)"
@@ -183,21 +197,26 @@ def set_session_seed(
     source_job_id: str,
     source_ref: str,
     seed_work_ref: str,
+    seed_work_sha256: str,
     thumbnail_ref: str,
+    thumbnail_sha256: str,
 ) -> None:
     with transaction(config) as connection:
         connection.execute(
             """
             UPDATE creative_sessions
             SET status='SEED_READY', seed_source_job_id=?, seed_source_ref=?,
-                seed_work_ref=?, thumbnail_ref=?, updated_at=?
+                seed_work_ref=?, seed_work_sha256=?, thumbnail_ref=?, thumbnail_sha256=?,
+                updated_at=?
             WHERE id=?
             """,
             (
                 source_job_id,
                 source_ref,
                 seed_work_ref,
+                seed_work_sha256,
                 thumbnail_ref,
+                thumbnail_sha256,
                 utc_now(),
                 session_id,
             ),
