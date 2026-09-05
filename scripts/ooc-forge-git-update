@@ -129,6 +129,15 @@ rsync -a --delete --exclude '.git' --exclude '.venv' "$SOURCE/" "$INSTALL_ROOT/"
 mv "$VENV" "$INSTALL_ROOT/.venv"
 printf '%s\n' "$COMMIT" > "$INSTALL_ROOT/.ooc-source-ref"
 
+# Immutable workflow definitions ship with the runtime; persistent model weights
+# and generated assets remain untouched. This makes maintenance updates capable
+# of introducing new workflow types without requiring a full appliance reinstall.
+for workflow in manual-image manual-image-reference print-upscale video-wan22-ti2v; do
+  install -d -o forge -g forge -m 0750 "$FORGE_DATA_ROOT/workflows/$workflow"
+  install -o forge -g forge -m 0644 "$SOURCE/workflows/$workflow/manifest.json" "$FORGE_DATA_ROOT/workflows/$workflow/manifest.json"
+  install -o forge -g forge -m 0644 "$SOURCE/workflows/$workflow/workflow.json" "$FORGE_DATA_ROOT/workflows/$workflow/workflow.json"
+done
+
 systemctl restart ooc-forge-web.service ooc-forge-worker.service ooc-forge-sync.service
 systemctl is-active --quiet ooc-forge-web.service
 systemctl is-active --quiet ooc-forge-worker.service
