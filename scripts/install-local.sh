@@ -68,7 +68,7 @@ ooc_forge:
   embeddings: models/embeddings
 YAML
 
-for workflow in manual-image manual-image-reference print-upscale video-wan22-ti2v; do
+for workflow in manual-image manual-image-reference print-upscale video-wan22-ti2v audio-stable-audio3; do
   install -o "$FORGE_USER" -g "$FORGE_USER" -d "$FORGE_DATA/workflows/$workflow"
   install -o "$FORGE_USER" -g "$FORGE_USER" -m 0644 "$SOURCE_DIR/workflows/$workflow/manifest.json" "$FORGE_DATA/workflows/$workflow/manifest.json"
   install -o "$FORGE_USER" -g "$FORGE_USER" -m 0644 "$SOURCE_DIR/workflows/$workflow/workflow.json" "$FORGE_DATA/workflows/$workflow/workflow.json"
@@ -81,7 +81,7 @@ done
 for unit in ooc-forge-init ooc-forge-gpu-init ooc-forge-web ooc-forge-worker ooc-forge-sync comfyui; do
   install -m 0644 "$SOURCE_DIR/systemd/$unit.service" "/etc/systemd/system/$unit.service"
 done
-for unit in ooc-forge-git-update ooc-forge-model-install ooc-forge-upscale-model-install ooc-forge-prompt-model-install ooc-forge-video-model-install; do
+for unit in ooc-forge-git-update ooc-forge-model-install ooc-forge-upscale-model-install ooc-forge-prompt-model-install ooc-forge-video-model-install ooc-forge-audio-model-install; do
   install -m 0644 "$SOURCE_DIR/systemd/$unit.service" "/etc/systemd/system/$unit.service"
 done
 install -m 0755 "$SOURCE_DIR/scripts/ooc-forge-git-update" /usr/local/sbin/ooc-forge-git-update
@@ -89,6 +89,7 @@ install -m 0755 "$SOURCE_DIR/scripts/ooc-forge-model-install" /usr/local/sbin/oo
 install -m 0755 "$SOURCE_DIR/scripts/ooc-forge-upscale-model-install" /usr/local/sbin/ooc-forge-upscale-model-install
 install -m 0755 "$SOURCE_DIR/scripts/ooc-forge-prompt-model-install" /usr/local/sbin/ooc-forge-prompt-model-install
 install -m 0755 "$SOURCE_DIR/scripts/ooc-forge-video-model-install" /usr/local/sbin/ooc-forge-video-model-install
+install -m 0755 "$SOURCE_DIR/scripts/ooc-forge-audio-model-install" /usr/local/sbin/ooc-forge-audio-model-install
 install -m 0755 "$SOURCE_DIR/scripts/ooc-forge-gpu-init" /usr/local/sbin/ooc-forge-gpu-init
 install -m 0440 "$SOURCE_DIR/systemd/ooc-forge-maintenance.sudoers" /etc/sudoers.d/ooc-forge-maintenance
 visudo -cf /etc/sudoers.d/ooc-forge-maintenance >/dev/null
@@ -113,6 +114,6 @@ systemctl restart comfyui ooc-forge-web ooc-forge-worker ooc-forge-sync
 echo
 echo "FORGE local runtime installed."
 echo "Open: http://forge.local/"
-echo "Install/manage SDXL and print models from Models; prompt/video models from Creative Models."
+echo "Install/manage SDXL and print models from Models; prompt/video/audio models from Creative Models."
 echo "Developer/Maintenance Git updates are available under System."
 echo "If mDNS is unavailable, use this machine's LAN IP address."
