@@ -70,20 +70,22 @@ def test_video_workflow_is_native_wan_seed_work_i2v():
     assert '"fps"' in manifest
 
 
-def test_local_install_owns_prompt_runtime_video_workflow_and_services():
+def test_local_install_owns_prompt_runtime_video_and_reference_workflows():
     installer = read("scripts/install-local.sh")
     assert "cmake ffmpeg" in installer
-    assert "manual-image print-upscale video-wan22-ti2v" in installer
+    for workflow in ("manual-image", "manual-image-reference", "print-upscale", "video-wan22-ti2v"):
+        assert workflow in installer
     assert '"$SOURCE_DIR/scripts/install-prompt-runtime"' in installer
     assert_looped_service_installed(installer, "ooc-forge-prompt-model-install")
     assert_looped_service_installed(installer, "ooc-forge-video-model-install")
 
 
-def test_iso_owns_prompt_runtime_and_video_contract_without_model_weights():
+def test_iso_owns_prompt_runtime_reference_and_video_contract_without_model_weights():
     packages = read("iso/config/package-lists/forge.list.chroot").splitlines()
     assert "cmake" in packages
     hook = read("iso/config/hooks/live/010-ooc-forge-runtime.hook.chroot")
-    assert "manual-image print-upscale video-wan22-ti2v" in hook
+    for workflow in ("manual-image", "manual-image-reference", "print-upscale", "video-wan22-ti2v"):
+        assert workflow in hook
     assert '"$SOURCE_DIR/scripts/install-prompt-runtime"' in hook
     assert_looped_service_installed(hook, "ooc-forge-prompt-model-install")
     assert_looped_service_installed(hook, "ooc-forge-video-model-install")
