@@ -50,7 +50,9 @@ def test_prompt_video_and_audio_models_are_verified_and_on_demand():
     assert "Checksum mismatch for $filename; retrying one clean download from byte zero." in video
     assert "did not match after a clean retry" in video
 
-    audio = read("scripts/ooc-forge-audio-model-install")
+    audio_installer_path = ROOT / "scripts/ooc-forge-audio-model-install"
+    assert audio_installer_path.stat().st_mode & 0o111
+    audio = audio_installer_path.read_text(encoding="utf-8")
     assert "stable_audio_3_medium_base.safetensors" in audio
     assert "t5gemma_b_b_ul2.safetensors" in audio
     assert "c443fcc4d491475064cd0ff3eb92459b1e5f5060e86d96d016f048e528e24195" in audio
@@ -88,11 +90,13 @@ def test_audio_workflow_is_native_stable_audio3():
     assert '"class_type": "CLIPLoader"' in workflow
     assert '"type": "stable_audio"' in workflow
     assert '"class_type": "EmptyLatentAudio"' in workflow
+    assert '"class_type": "ConditioningStableAudio"' in workflow
     assert '"class_type": "VAEDecodeAudio"' in workflow
     assert '"class_type": "SaveAudio"' in workflow
     assert "stable_audio_3_medium_base.safetensors" in workflow
     assert "t5gemma_b_b_ul2.safetensors" in workflow
     assert '"duration_seconds"' in manifest
+    assert '"seconds_total"' in manifest
     assert '"prompt"' in manifest
     assert '"seed"' in manifest
 
