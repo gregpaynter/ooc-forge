@@ -58,8 +58,10 @@ def test_init_db_upgrades_legacy_jobs_table_before_session_index(tmp_path):
     with sqlite3.connect(config.database_path) as connection:
         columns = {row[1] for row in connection.execute("PRAGMA table_info(jobs)")}
         indexes = {row[1] for row in connection.execute("PRAGMA index_list(jobs)")}
+        session_columns = {row[1] for row in connection.execute("PRAGMA table_info(creative_sessions)")}
     assert {"creative_session_id", "parent_job_id", "derivative_type"} <= columns
     assert "ix_jobs_session_created" in indexes
+    assert {"etching_plate_ref", "etching_plate_sha256"} <= session_columns
 
 
 def test_candidate_batch_generates_distinct_studies(monkeypatch, tmp_path):
@@ -101,7 +103,7 @@ def test_candidate_batch_generates_distinct_studies(monkeypatch, tmp_path):
     assert len({asset["relative_path"] for asset in result["assets"]}) == 3
 
 
-def test_seed_promotion_creates_stable_work_and_thumbnail(monkeypatch, tmp_path):
+def test_seed_promotion_creates_stable_work_thumbnail_and_inverse_etching_plate(monkeypatch, tmp_path):
     config = make_config(tmp_path)
     ensure_layout(config)
     init_db(config)
@@ -135,8 +137,11 @@ def test_seed_promotion_creates_stable_work_and_thumbnail(monkeypatch, tmp_path)
         },
     )
 
+    commands: list[list[str]] = []
+
     def fake_run(command, check, timeout):
-        Path(command[-1]).write_bytes(b"webp")
+        commands.append(command)
+        Path(command[-1]).write_bytes(b"derived")
         return SimpleNamespace(returncode=0)
 
     monkeypatch.setattr("forge.creative.subprocess.run", fake_run)
@@ -153,13 +158,19 @@ def test_seed_promotion_creates_stable_work_and_thumbnail(monkeypatch, tmp_path)
     assert session["status"] == "SEED_READY"
     assert promoted["seed_work_ref"].endswith("/seed-work.png")
     assert promoted["thumbnail_ref"].endswith("/thumbnail.webp")
+    assert promoted["etching_plate_ref"].endswith("/etching-plate-inverse.png")
+    assert session["etching_plate_ref"] == promoted["etching_plate_ref"]
+    assert session["etching_plate_sha256"] == promoted["etching_plate_sha256"]
     assert (config.data_root / promoted["seed_work_ref"]).read_bytes() == b"study"
-    assert (config.data_root / promoted["thumbnail_ref"]).read_bytes() == b"webp"
+    assert (config.data_root / promoted["thumbnail_ref"]).read_bytes() == b"derived"
+    assert (config.data_root / promoted["etching_plate_ref"]).read_bytes() == b"derived"
+    assert any("hflip,negate" in command for command in commands)
 
     delete_job_and_files(config, job_id)
     assert get_job(config, job_id) is None
     assert (config.data_root / promoted["seed_work_ref"]).exists()
     assert (config.data_root / promoted["thumbnail_ref"]).exists()
+    assert (config.data_root / promoted["etching_plate_ref"]).exists()
 
 
 def test_session_delete_rejects_running_then_cleans_local_tree(tmp_path):
@@ -188,6 +199,7 @@ def test_session_delete_rejects_running_then_cleans_local_tree(tmp_path):
     work_root = config.library_root / "works" / session_id
     work_root.mkdir(parents=True)
     (work_root / "thumbnail.webp").write_bytes(b"thumb")
+    (work_root / "etching-plate-inverse.png").write_bytes(b"plate")
 
     delete_session_and_files(config, session_id)
     assert get_creative_session(config, session_id) is None
