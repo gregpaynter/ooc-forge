@@ -38,6 +38,7 @@ from forge.models import (
     upscale_model_install_running,
     upscale_model_install_status,
 )
+from forge.reference_image import prepare_reference_image, store_reference_image
 from forge.storage import (
     ensure_identity,
     ensure_layout,
@@ -65,6 +66,7 @@ def create_app() -> Flask:
     app = Flask(__name__)
     app.secret_key = str(secrets_value["session_secret"])
     app.config["FORGE_CONFIG"] = config
+    app.config["MAX_CONTENT_LENGTH"] = 25 * 1024 * 1024
 
     def login_required(view):
         @wraps(view)
@@ -91,7 +93,7 @@ def create_app() -> Flask:
                 flash("Passwords do not match.")
             else:
                 set_setting(config, "admin_password_hash", generate_password_hash(password))
-                name = request.form.get("forge_name", "").strip() or "OOC Forge"
+                name = request.form.get("forge_name", "").strip() or "FORGE"
                 update_identity(config, name=name)
                 session["admin"] = True
                 return redirect(url_for("dashboard"))
@@ -137,17 +139,43 @@ def create_app() -> Flask:
             if request.method == "POST"
             else (config.default_checkpoint or (checkpoints[0] if len(checkpoints) == 1 else ""))
         )
+        creation_mode = (
+            request.form.get("creation_mode", "prompt").strip().lower()
+            if request.method == "POST"
+            else "prompt"
+        )
+        if creation_mode not in {"prompt", "reference"}:
+            creation_mode = "prompt"
         candidate_count = max(1, min(12, setting_int(config, "default_candidate_count", 3)))
         if request.method == "POST":
             title = request.form.get("title", "").strip() or "Untitled"
             prompt = request.form.get("prompt", "").strip()
             negative_prompt = request.form.get("negative_prompt", "").strip()
+            prepared_reference = None
+            reference_error = None
+            if creation_mode == "reference":
+                camera_upload = request.files.get("camera_image")
+                upload_upload = request.files.get("reference_image")
+                selected_upload = (
+                    camera_upload
+                    if camera_upload is not None and str(camera_upload.filename or "").strip()
+                    else upload_upload
+                )
+                try:
+                    prepared_reference = prepare_reference_image(selected_upload)
+                except RuntimeError as error:
+                    reference_error = str(error)
+
             if not prompt:
                 flash("Prompt is required.")
             elif not checkpoints:
                 flash("No image checkpoint is installed. Install the reference model from Models before generating.")
             elif selected_checkpoint not in checkpoints:
                 flash("Select an installed image checkpoint.")
+            elif reference_error:
+                flash(reference_error)
+            elif creation_mode == "reference" and prepared_reference is None:
+                flash("Choose or capture a Reference Image before generating.")
             else:
                 creative_session_id = create_creative_session(
                     config,
@@ -167,7 +195,26 @@ def create_app() -> Flask:
                     "steps": int(request.form.get("steps") or 24),
                     "seed": -1,
                     "candidate_count": candidate_count,
+                    "creation_mode": creation_mode,
                 }
+                if creation_mode == "reference" and prepared_reference is not None:
+                    try:
+                        reference = store_reference_image(
+                            config,
+                            session_id=creative_session_id,
+                            prepared=prepared_reference,
+                        )
+                    except RuntimeError as error:
+                        delete_session_and_files(config, creative_session_id)
+                        flash(str(error))
+                        return redirect(url_for("create"))
+                    payload.update(
+                        {
+                            "workflow_id": "manual-image-reference",
+                            "reference_denoise": 0.65,
+                            **reference,
+                        }
+                    )
                 create_job(
                     config,
                     source="LOCAL",
@@ -182,6 +229,7 @@ def create_app() -> Flask:
             checkpoints=checkpoints,
             selected_checkpoint=selected_checkpoint,
             candidate_count=candidate_count,
+            selected_creation_mode=creation_mode,
         )
 
     @app.get("/sessions")
@@ -199,8 +247,12 @@ def create_app() -> Flask:
         candidates: list[dict[str, Any]] = []
         derivatives: list[dict[str, Any]] = []
         active = False
+        reference_image_ref = None
         for job_row in jobs:
             active = active or str(job_row["status"]) in {"QUEUED", "RUNNING"}
+            job_request = _json(job_row["request_json"])
+            if reference_image_ref is None and job_request.get("reference_image_ref"):
+                reference_image_ref = str(job_request["reference_image_ref"])
             result = _json(job_row["result_json"])
             entry = {"row": job_row, "result": result}
             if str(job_row["derivative_type"] or "") == "study_batch":
@@ -216,6 +268,7 @@ def create_app() -> Flask:
             candidates=candidates,
             derivatives=derivatives,
             active=active,
+            reference_image_ref=reference_image_ref,
             upscale_models=installed_upscale_models(config),
             reference_upscale_model=REFERENCE_UPSCALE_MODEL,
             default_video_duration=setting_int(config, "default_video_duration_seconds", 30),
@@ -431,7 +484,7 @@ def create_app() -> Flask:
                         f"{origin}/api/forge/commission",
                         json={
                             "forge_id": identity["forge_id"],
-                            "name": identity.get("name", "OOC Forge"),
+                            "name": identity.get("name", "FORGE"),
                             "version": __version__,
                             "capabilities": capabilities(config),
                             "status": health_value["status"],
