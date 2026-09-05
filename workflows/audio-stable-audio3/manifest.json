@@ -1,11 +1,12 @@
 {
   "id": "audio-stable-audio3",
-  "version": "1",
+  "version": "2",
   "output_kind": "audio",
   "bindings": [
     {"source": "prompt", "node": "3", "input": "text"},
     {"source": "negative_prompt", "node": "4", "input": "text"},
     {"source": "duration_seconds", "node": "5", "input": "seconds", "default": 30.0},
+    {"source": "duration_seconds", "node": "9", "input": "seconds_total", "default": 30.0},
     {"source": "seed", "node": "6", "input": "seed"},
     {"source": "steps", "node": "6", "input": "steps", "default": 50},
     {"source": "cfg", "node": "6", "input": "cfg", "default": 7.0}
