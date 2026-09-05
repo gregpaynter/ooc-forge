@@ -68,7 +68,7 @@ ooc_forge:
   embeddings: models/embeddings
 YAML
 
-for workflow in manual-image print-upscale video-wan22-ti2v; do
+for workflow in manual-image manual-image-reference print-upscale video-wan22-ti2v; do
   install -o "$FORGE_USER" -g "$FORGE_USER" -d "$FORGE_DATA/workflows/$workflow"
   install -o "$FORGE_USER" -g "$FORGE_USER" -m 0644 "$SOURCE_DIR/workflows/$workflow/manifest.json" "$FORGE_DATA/workflows/$workflow/manifest.json"
   install -o "$FORGE_USER" -g "$FORGE_USER" -m 0644 "$SOURCE_DIR/workflows/$workflow/workflow.json" "$FORGE_DATA/workflows/$workflow/workflow.json"
@@ -111,7 +111,7 @@ systemctl restart ooc-forge-gpu-init
 systemctl restart comfyui ooc-forge-web ooc-forge-worker ooc-forge-sync
 
 echo
-echo "OOC Forge local runtime installed."
+echo "FORGE local runtime installed."
 echo "Open: http://forge.local/"
 echo "Install/manage SDXL and print models from Models; prompt/video models from Creative Models."
 echo "Developer/Maintenance Git updates are available under System."
