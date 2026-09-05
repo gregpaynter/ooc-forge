@@ -9,8 +9,10 @@ from forge.config import Config
 from forge.models import REFERENCE_PROMPT_MODEL, prompt_model_path, prompt_model_ready
 
 
-PROMPT_TEMPLATE_VERSION = "video-director.v1"
+PROMPT_TEMPLATE_VERSION = "video-director.v2"
 MAX_SHOT_SECONDS = 5.0
+MAX_OUTPUT_TOKENS = 640
+PROMPT_TIMEOUT_SECONDS = 240
 
 
 def _extract_json(text: str) -> dict[str, Any]:
@@ -85,7 +87,7 @@ def compile_video_prompt(
     duration = max(1.0, float(duration_seconds))
     user_direction = user_video_prompt.strip()
     instruction = f"""
-You are the OOC Forge temporal director. Convert a still-image creative prompt into a concise image-to-video direction and a shot plan.
+You are the OOC Forge temporal director. Convert a still-image creative prompt into a concise image-to-video direction and shot plan.
 
 Preserve the identity, composition, subject, style and atmosphere of the Seed Work. Add only plausible temporal behavior: camera movement, subject movement, environmental motion, pacing and continuity. Do not invent unrelated subjects, text, logos, scene changes or new locations unless the user explicitly asks for them.
 
@@ -97,16 +99,16 @@ Additional user video direction:
 
 Requested duration: {duration:.2f} seconds.
 
-Return ONLY one JSON object with this schema:
+Return ONLY one compact JSON object with this schema:
 {{
-  "derived_video_prompt": "motion/camera interpretation derived from the creative prompt",
-  "resolved_video_prompt": "final prompt combining creative intent and optional user direction",
+  "derived_video_prompt": "concise motion/camera interpretation",
+  "resolved_video_prompt": "concise final prompt including optional user direction",
   "camera": "short camera description",
   "motion": "short subject/environment motion description",
   "pacing": "short pacing description",
-  "continuity_rules": ["rule", "rule"],
+  "continuity_rules": ["short rule", "short rule"],
   "shots": [
-    {{"duration": 5.0, "instruction": "specific shot motion instruction"}}
+    {{"duration": 5.0, "instruction": "short specific motion instruction"}}
   ]
 }}
 
@@ -115,30 +117,46 @@ Rules:
 - each shot must be at most {MAX_SHOT_SECONDS:.1f} seconds
 - use sequential continuity; later shots continue from the prior shot rather than restarting the scene
 - the resolved prompt must preserve the creative prompt while incorporating the additional user direction
+- keep every field concise so the complete JSON fits comfortably within {MAX_OUTPUT_TOKENS} tokens
+- do not think aloud
 - no markdown, commentary or code fences
 """.strip()
 
-    result = subprocess.run(
-        [
-            "/usr/local/bin/ooc-llama-cli",
-            "-m",
-            str(prompt_model_path(config)),
-            "-p",
-            instruction,
-            "-n",
-            "1400",
-            "--ctx-size",
-            "4096",
-            "--temp",
-            "0.2",
-            "--no-display-prompt",
-            "--simple-io",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=180,
-        check=True,
-    )
+    command = [
+        "/usr/local/bin/ooc-llama-cli",
+        "-m",
+        str(prompt_model_path(config)),
+        "-p",
+        instruction,
+        "-n",
+        str(MAX_OUTPUT_TOKENS),
+        "--ctx-size",
+        "4096",
+        "--temp",
+        "0.2",
+        "--reasoning",
+        "off",
+        "--no-display-prompt",
+        "--simple-io",
+    ]
+    try:
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=PROMPT_TIMEOUT_SECONDS,
+            check=True,
+        )
+    except subprocess.TimeoutExpired as error:
+        raise RuntimeError(
+            f"Local Qwen video planning exceeded {PROMPT_TIMEOUT_SECONDS} seconds. "
+            "The video model was not started; retry the job after checking CPU load."
+        ) from error
+    except subprocess.CalledProcessError as error:
+        detail = (error.stderr or error.stdout or "").strip()
+        suffix = f" {detail[-500:]}" if detail else ""
+        raise RuntimeError(f"Local Qwen video planning failed.{suffix}") from error
+
     value = _extract_json(result.stdout)
     derived = str(value.get("derived_video_prompt") or "").strip()
     resolved = str(value.get("resolved_video_prompt") or "").strip()
@@ -161,5 +179,7 @@ Rules:
             "model": REFERENCE_PROMPT_MODEL["filename"],
             "model_sha256": REFERENCE_PROMPT_MODEL["sha256"],
             "template_version": PROMPT_TEMPLATE_VERSION,
+            "reasoning": "off",
+            "max_output_tokens": MAX_OUTPUT_TOKENS,
         },
     }
