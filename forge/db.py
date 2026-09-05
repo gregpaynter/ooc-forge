@@ -241,6 +241,24 @@ def set_session_seed(
         )
 
 
+def set_session_etching_plate(
+    config: Config,
+    session_id: str,
+    *,
+    etching_plate_ref: str,
+    etching_plate_sha256: str,
+) -> None:
+    with transaction(config) as connection:
+        connection.execute(
+            """
+            UPDATE creative_sessions
+            SET etching_plate_ref=?, etching_plate_sha256=?, updated_at=?
+            WHERE id=?
+            """,
+            (etching_plate_ref, etching_plate_sha256, utc_now(), session_id),
+        )
+
+
 def touch_creative_session(config: Config, session_id: str) -> None:
     with transaction(config) as connection:
         connection.execute(
