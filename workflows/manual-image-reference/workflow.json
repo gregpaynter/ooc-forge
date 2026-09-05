@@ -1,0 +1,64 @@
+{
+  "3": {
+    "inputs": {
+      "seed": 1,
+      "steps": 24,
+      "cfg": 7.0,
+      "sampler_name": "euler",
+      "scheduler": "normal",
+      "denoise": 0.65,
+      "model": ["4", 0],
+      "positive": ["6", 0],
+      "negative": ["7", 0],
+      "latent_image": ["11", 0]
+    },
+    "class_type": "KSampler",
+    "_meta": {"title": "KSampler"}
+  },
+  "4": {
+    "inputs": {"ckpt_name": "OOC_CORE_IMAGE.safetensors"},
+    "class_type": "CheckpointLoaderSimple",
+    "_meta": {"title": "OOC Core Image Model"}
+  },
+  "5": {
+    "inputs": {"image": "reference-image.png"},
+    "class_type": "LoadImage",
+    "_meta": {"title": "Reference Image"}
+  },
+  "10": {
+    "inputs": {
+      "upscale_method": "lanczos",
+      "width": 1024,
+      "height": 1024,
+      "crop": "center",
+      "image": ["5", 0]
+    },
+    "class_type": "ImageScale",
+    "_meta": {"title": "Fit Reference Image"}
+  },
+  "11": {
+    "inputs": {"pixels": ["10", 0], "vae": ["4", 2]},
+    "class_type": "VAEEncode",
+    "_meta": {"title": "Encode Reference"}
+  },
+  "6": {
+    "inputs": {"text": "FORGE", "clip": ["4", 1]},
+    "class_type": "CLIPTextEncode",
+    "_meta": {"title": "Prompt"}
+  },
+  "7": {
+    "inputs": {"text": "", "clip": ["4", 1]},
+    "class_type": "CLIPTextEncode",
+    "_meta": {"title": "Negative Prompt"}
+  },
+  "8": {
+    "inputs": {"samples": ["3", 0], "vae": ["4", 2]},
+    "class_type": "VAEDecode",
+    "_meta": {"title": "Decode"}
+  },
+  "9": {
+    "inputs": {"filename_prefix": "FORGE-Reference", "images": ["8", 0]},
+    "class_type": "SaveImage",
+    "_meta": {"title": "Save"}
+  }
+}
