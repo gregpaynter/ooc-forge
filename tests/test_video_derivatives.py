@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import subprocess
 from pathlib import Path
-from types import SimpleNamespace
 
 from forge.config import Config
 from forge.health import capabilities
@@ -11,11 +10,20 @@ from forge.models import REFERENCE_PROMPT_MODEL, REFERENCE_VIDEO_MODEL
 from forge.prompt_compiler import (
     MAX_OUTPUT_TOKENS,
     PROMPT_TIMEOUT_SECONDS,
+    SEED_AESTHETIC_RULE,
     _extract_json,
     _normalise_shots,
     compile_video_prompt,
 )
-from forge.video import VIDEO_PROFILES, _frames_for_duration, video_profile
+from forge.video import (
+    AESTHETIC_LOCK,
+    MOBILE_DIMENSIONS,
+    VIDEO_PROFILES,
+    _classify_seed_geometry,
+    _frames_for_duration,
+    video_dimensions,
+    video_profile,
+)
 
 
 def make_config(tmp_path: Path) -> Config:
@@ -59,7 +67,7 @@ def test_shot_plan_covers_duration_with_max_five_second_segments():
     assert shots[0]["instruction"] == "push forward"
 
 
-def test_prompt_compiler_timeout_uses_deterministic_fallback(monkeypatch, tmp_path):
+def test_prompt_compiler_timeout_uses_deterministic_fallback_and_locks_seed_aesthetic(monkeypatch, tmp_path):
     config = make_config(tmp_path)
     monkeypatch.setattr("forge.prompt_compiler.prompt_model_ready", lambda cfg: True)
 
@@ -77,8 +85,11 @@ def test_prompt_compiler_timeout_uses_deterministic_fallback(monkeypatch, tmp_pa
     assert MAX_OUTPUT_TOKENS == 384
     assert PROMPT_TIMEOUT_SECONDS == 120
     assert result["compiler"]["mode"] == "deterministic_fallback"
+    assert result["compiler"]["seed_aesthetic_locked"] is True
     assert "120 seconds" in result["compiler"]["fallback_reason"]
     assert result["user_video_prompt"] == "turns into moonface"
+    assert SEED_AESTHETIC_RULE in result["resolved_video_prompt"]
+    assert SEED_AESTHETIC_RULE in result["continuity_rules"]
     assert len(result["shots"]) == 6
     assert sum(float(item["duration"]) for item in result["shots"]) == 30.0
     assert all(float(item["duration"]) <= 5.0 for item in result["shots"])
@@ -91,7 +102,7 @@ def test_wan_frame_count_is_4n_plus_1_and_covers_planned_duration():
         assert frames >= round(seconds * 24)
 
 
-def test_video_profiles_preserve_production_and_add_fast_draft():
+def test_video_profiles_preserve_quality_policy_but_geometry_is_seed_driven():
     production = video_profile("production")
     draft = video_profile("draft")
 
@@ -99,21 +110,49 @@ def test_video_profiles_preserve_production_and_add_fast_draft():
         "id": "production",
         "label": "Production 720p",
         "width": 1280,
-        "height": 704,
+        "height": 720,
         "fps": 24,
         "steps": 20,
         "master_preset": "slow",
         "master_crf": 14,
         "mobile": True,
     }
-    assert draft["width"] == 832
-    assert draft["height"] == 480
+    assert draft["width"] == 768
+    assert draft["height"] == 432
     assert draft["fps"] == 16
     assert draft["steps"] == 16
     assert draft["mobile"] is False
     assert _frames_for_duration(5.0, fps=int(draft["fps"])) == 81
     assert _frames_for_duration(5.0, fps=int(production["fps"])) == 121
     assert VIDEO_PROFILES["draft"]["width"] < VIDEO_PROFILES["production"]["width"]
+
+
+def test_seed_geometry_supports_square_portrait_and_landscape_ratios():
+    cases = {
+        (1024, 1024): ("1:1", "square"),
+        (1024, 768): ("4:3", "landscape"),
+        (768, 1024): ("4:3", "portrait"),
+        (1280, 720): ("16:9", "landscape"),
+        (720, 1280): ("16:9", "portrait"),
+    }
+    for dimensions, expected in cases.items():
+        value = _classify_seed_geometry(*dimensions)
+        assert (value["aspect_ratio"], value["orientation"]) == expected
+
+
+def test_video_dimensions_inherit_seed_ratio_for_draft_production_and_mobile():
+    assert video_dimensions("draft", 1024, 1024)[:2] == (768, 768)
+    assert video_dimensions("production", 1024, 768)[:2] == (1024, 768)
+    assert video_dimensions("production", 768, 1024)[:2] == (768, 1024)
+    assert video_dimensions("production", 1280, 720)[:2] == (1280, 720)
+    assert video_dimensions("production", 720, 1280)[:2] == (720, 1280)
+    assert MOBILE_DIMENSIONS["1:1"] == (720, 720)
+    assert MOBILE_DIMENSIONS["4:3_landscape"] == (720, 540)
+    assert MOBILE_DIMENSIONS["4:3_portrait"] == (540, 720)
+    assert MOBILE_DIMENSIONS["16:9_landscape"] == (704, 396)
+    assert MOBILE_DIMENSIONS["16:9_portrait"] == (396, 704)
+    assert "visual authority" in AESTHETIC_LOCK
+    assert "do not restyle" in AESTHETIC_LOCK.lower()
 
 
 def test_video_workflow_exposes_sampling_steps_binding():

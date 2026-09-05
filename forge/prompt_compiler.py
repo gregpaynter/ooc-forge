@@ -9,10 +9,14 @@ from forge.config import Config
 from forge.models import REFERENCE_PROMPT_MODEL, prompt_model_path, prompt_model_ready
 
 
-PROMPT_TEMPLATE_VERSION = "video-director.v3"
+PROMPT_TEMPLATE_VERSION = "video-director.v4"
 MAX_SHOT_SECONDS = 5.0
 MAX_OUTPUT_TOKENS = 384
 PROMPT_TIMEOUT_SECONDS = 120
+SEED_AESTHETIC_RULE = (
+    "Preserve the Seed Work's medium, palette, texture, line quality, rendering style, "
+    "compositional language, visual density and atmosphere. Animate it; never restyle it."
+)
 
 
 def _extract_json(text: str) -> dict[str, Any]:
@@ -89,6 +93,7 @@ def _compiler_metadata(*, mode: str, fallback_reason: str | None = None) -> dict
         "max_output_tokens": MAX_OUTPUT_TOKENS,
         "timeout_seconds": PROMPT_TIMEOUT_SECONDS,
         "mode": mode,
+        "seed_aesthetic_locked": True,
     }
     if fallback_reason:
         value["fallback_reason"] = fallback_reason[:500]
@@ -109,7 +114,10 @@ def _fallback_plan(
         if user_direction
         else "Add restrained camera, subject and environmental motion while preserving the Seed Work."
     )
-    resolved = f"{creative}\nTemporal direction: {derived}".strip()
+    resolved = (
+        f"{creative}\nTemporal direction: {derived}\n"
+        f"Aesthetic constraint: {SEED_AESTHETIC_RULE}"
+    ).strip()
     raw_shots: list[dict[str, Any]] = []
     cursor = 0.0
     index = 0
@@ -124,7 +132,8 @@ def _fallback_plan(
             {
                 "duration": shot_duration,
                 "instruction": (
-                    f"{continuity}; {derived}. Preserve subject identity, composition, visual style and atmosphere."
+                    f"{continuity}; {derived}. {SEED_AESTHETIC_RULE} "
+                    "Preserve subject identity and composition."
                 ),
             }
         )
@@ -143,9 +152,11 @@ def _fallback_plan(
         "camera": "Restrained continuity-preserving camera movement.",
         "motion": derived,
         "pacing": "Continuous and measured.",
+        "aesthetic_rule": SEED_AESTHETIC_RULE,
         "continuity_rules": [
             "Continue from the previous shot's final frame.",
-            "Preserve subject identity, composition, style and atmosphere.",
+            "Preserve subject identity and composition.",
+            SEED_AESTHETIC_RULE,
         ],
         "shots": _normalise_shots(value, duration),
         "duration_seconds": duration,
@@ -165,9 +176,11 @@ def compile_video_prompt(
     duration = max(1.0, float(duration_seconds))
     user_direction = user_video_prompt.strip()
     instruction = f"""
-You are the OOC Forge temporal director. Convert a still-image creative prompt into a concise image-to-video direction and shot plan.
+You are the OOC Forge temporal director. Convert a still-image creative prompt into concise motion direction and a shot plan for the exact Seed Work supplied to the video model.
 
-Preserve the identity, composition, subject, style and atmosphere of the Seed Work. Add only plausible temporal behavior: camera movement, subject movement, environmental motion, pacing and continuity. Do not invent unrelated subjects, text, logos, scene changes or new locations unless the user explicitly asks for them.
+The Seed Work is the visual authority. Its aesthetic is immutable for this derivative. {SEED_AESTHETIC_RULE}
+
+Preserve subject identity and the visual world of the Seed Work. Add only temporal behaviour: camera movement, subject movement, environmental motion, pacing and continuity. A user may request a transformation or event, but that event must occur inside the Seed Work's existing aesthetic. Do not invent unrelated subjects, text, logos, scene changes or new locations unless explicitly requested. Never convert the Work into a different photographic, painterly, illustrative, 3D, cinematic or graphic style.
 
 Creative prompt:
 {creative_prompt.strip()}
@@ -180,7 +193,7 @@ Requested duration: {duration:.2f} seconds.
 Return ONLY one compact JSON object with this schema:
 {{
   "derived_video_prompt": "concise motion/camera interpretation",
-  "resolved_video_prompt": "concise final prompt including optional user direction",
+  "resolved_video_prompt": "concise final prompt preserving Seed aesthetic and optional user direction",
   "camera": "short camera description",
   "motion": "short subject/environment motion description",
   "pacing": "short pacing description",
@@ -195,6 +208,7 @@ Rules:
 - each shot must be at most {MAX_SHOT_SECONDS:.1f} seconds
 - use sequential continuity; later shots continue from the prior shot rather than restarting the scene
 - the resolved prompt must preserve the creative prompt while incorporating the additional user direction
+- every shot must preserve the Seed Work aesthetic; motion is allowed, restyling is not
 - keep every field concise so the complete JSON fits comfortably within {MAX_OUTPUT_TOKENS} tokens
 - do not think aloud
 - no markdown, commentary or code fences
@@ -264,11 +278,12 @@ Rules:
         "camera": str(value.get("camera") or "").strip() or None,
         "motion": str(value.get("motion") or "").strip() or None,
         "pacing": str(value.get("pacing") or "").strip() or None,
+        "aesthetic_rule": SEED_AESTHETIC_RULE,
         "continuity_rules": [
             str(item).strip()
             for item in value.get("continuity_rules") or []
             if str(item).strip()
-        ],
+        ] + [SEED_AESTHETIC_RULE],
         "shots": shots,
         "duration_seconds": duration,
         "compiler": _compiler_metadata(mode="local_llm"),
