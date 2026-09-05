@@ -93,3 +93,12 @@ def test_iso_owns_prompt_runtime_reference_and_video_contract_without_model_weig
     assert "systemctl enable ooc-forge-video-model-install.service" not in hook
     # Model weights are managed after install; only verified installer metadata belongs in the ISO.
     assert "wan2.2_ti2v_5B_fp16.safetensors" not in read("iso/config/package-lists/forge.list.chroot")
+
+
+def test_auto_refresh_pauses_while_operator_edits_forms():
+    base = read("forge/templates/base.html")
+    assert "autoRefreshMeta.remove()" in base
+    assert "input:not([type=\"hidden\"]), textarea, select" in base
+    assert "if(!editing&&!dirty){window.location.reload();return;}" in base
+    assert "document.addEventListener('input'" in base
+    assert "document.addEventListener('focusin'" in base
