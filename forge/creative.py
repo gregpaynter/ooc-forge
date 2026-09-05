@@ -117,10 +117,37 @@ def promote_seed_work(
     )
     temp_thumbnail.replace(thumbnail)
 
+    # Plate-preparation artwork is deterministic: horizontally reverse the image
+    # so the transferred print reads in the Seed Work orientation, and invert its
+    # tonal polarity for the etching plate preparation image. Never mutate the Seed.
+    etching_plate = destination_root / "etching-plate-inverse.png"
+    temp_etching_plate = destination_root / ".etching-plate-inverse.tmp.png"
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            str(seed_work),
+            "-vf",
+            "hflip,negate",
+            "-frames:v",
+            "1",
+            str(temp_etching_plate),
+        ],
+        check=True,
+        timeout=120,
+    )
+    temp_etching_plate.replace(etching_plate)
+
     seed_ref = seed_work.relative_to(config.data_root).as_posix()
     thumbnail_ref = thumbnail.relative_to(config.data_root).as_posix()
+    etching_plate_ref = etching_plate.relative_to(config.data_root).as_posix()
     seed_sha256 = _sha256(seed_work)
     thumbnail_sha256 = _sha256(thumbnail)
+    etching_plate_sha256 = _sha256(etching_plate)
     set_session_seed(
         config,
         session_id,
@@ -130,12 +157,16 @@ def promote_seed_work(
         seed_work_sha256=seed_sha256,
         thumbnail_ref=thumbnail_ref,
         thumbnail_sha256=thumbnail_sha256,
+        etching_plate_ref=etching_plate_ref,
+        etching_plate_sha256=etching_plate_sha256,
     )
     return {
         "seed_work_ref": seed_ref,
         "seed_work_sha256": seed_sha256,
         "thumbnail_ref": thumbnail_ref,
         "thumbnail_sha256": thumbnail_sha256,
+        "etching_plate_ref": etching_plate_ref,
+        "etching_plate_sha256": etching_plate_sha256,
     }
 
 
