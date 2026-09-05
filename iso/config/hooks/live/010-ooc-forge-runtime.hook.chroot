@@ -49,7 +49,7 @@ chmod 0644 /etc/ooc-forge/comfyui-model-paths.yaml
 
 # Seed all immutable workflow definitions. Model weights remain separate Forge
 # Data and are installed later through the authenticated model-management UI.
-for workflow in manual-image manual-image-reference print-upscale video-wan22-ti2v; do
+for workflow in manual-image manual-image-reference print-upscale video-wan22-ti2v audio-stable-audio3; do
   install -o "$FORGE_USER" -g "$FORGE_USER" -d "$FORGE_DATA/workflows/$workflow"
   install -o "$FORGE_USER" -g "$FORGE_USER" -m 0644 "$SOURCE_DIR/workflows/$workflow/manifest.json" "$FORGE_DATA/workflows/$workflow/manifest.json"
   install -o "$FORGE_USER" -g "$FORGE_USER" -m 0644 "$SOURCE_DIR/workflows/$workflow/workflow.json" "$FORGE_DATA/workflows/$workflow/workflow.json"
@@ -70,7 +70,8 @@ for unit in \
   ooc-forge-model-install \
   ooc-forge-upscale-model-install \
   ooc-forge-prompt-model-install \
-  ooc-forge-video-model-install; do
+  ooc-forge-video-model-install \
+  ooc-forge-audio-model-install; do
   install -m 0644 "$SOURCE_DIR/systemd/$unit.service" "/etc/systemd/system/$unit.service"
 done
 install -m 0440 "$SOURCE_DIR/systemd/ooc-forge-maintenance.sudoers" /etc/sudoers.d/ooc-forge-maintenance
@@ -79,6 +80,7 @@ install -m 0755 "$SOURCE_DIR/scripts/ooc-forge-model-install" /usr/local/sbin/oo
 install -m 0755 "$SOURCE_DIR/scripts/ooc-forge-upscale-model-install" /usr/local/sbin/ooc-forge-upscale-model-install
 install -m 0755 "$SOURCE_DIR/scripts/ooc-forge-prompt-model-install" /usr/local/sbin/ooc-forge-prompt-model-install
 install -m 0755 "$SOURCE_DIR/scripts/ooc-forge-video-model-install" /usr/local/sbin/ooc-forge-video-model-install
+install -m 0755 "$SOURCE_DIR/scripts/ooc-forge-audio-model-install" /usr/local/sbin/ooc-forge-audio-model-install
 install -m 0755 "$SOURCE_DIR/scripts/ooc-forge-appliance-policy" /usr/local/sbin/ooc-forge-appliance-policy
 install -m 0755 "$SOURCE_DIR/scripts/ooc-forge-gpu-init" /usr/local/sbin/ooc-forge-gpu-init
 
