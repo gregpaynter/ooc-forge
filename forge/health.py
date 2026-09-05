@@ -9,7 +9,7 @@ import requests
 from forge import __version__
 from forge.comfy import installed_checkpoints, installed_upscale_models
 from forge.config import Config
-from forge.models import prompt_model_ready, video_model_ready
+from forge.models import REFERENCE_AUDIO_MODEL, audio_model_ready, prompt_model_ready, video_model_ready
 
 
 def _gpu() -> dict[str, Any]:
@@ -63,7 +63,12 @@ def report(config: Config) -> dict[str, Any]:
 
 def capabilities(config: Config) -> dict[str, Any]:
     image_workflow_ready = (config.workflows_root / "manual-image" / "workflow.json").exists()
-    image_model_ready = bool(installed_checkpoints(config))
+    audio_checkpoint_names = {
+        str(item["filename"])
+        for item in REFERENCE_AUDIO_MODEL["files"]
+        if str(item["directory"]) == "checkpoints"
+    }
+    image_model_ready = any(name not in audio_checkpoint_names for name in installed_checkpoints(config))
     image_ready = image_workflow_ready and image_model_ready
     deterministic_image_ready = image_ready and shutil.which("ffmpeg") is not None
     print_workflow_ready = (config.workflows_root / "print-upscale" / "workflow.json").exists()
@@ -77,6 +82,13 @@ def capabilities(config: Config) -> dict[str, Any]:
         and prompt_model_ready(config)
         and shutil.which("ffmpeg") is not None
     )
+    audio_workflow_ready = (config.workflows_root / "audio-stable-audio3" / "workflow.json").exists()
+    audio_ready = (
+        image_ready
+        and audio_workflow_ready
+        and audio_model_ready(config)
+        and shutil.which("ffmpeg") is not None
+    )
     return {
         "manual_create": image_ready,
         "comfyui": True,
@@ -86,5 +98,5 @@ def capabilities(config: Config) -> dict[str, Any]:
         "print_work": print_ready,
         "video": video_ready,
         "video_mobile": video_ready,
-        "audio": False,
+        "audio": audio_ready,
     }
