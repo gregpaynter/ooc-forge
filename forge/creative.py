@@ -14,6 +14,7 @@ from forge.db import (
     get_creative_session,
     get_job,
     list_session_jobs,
+    set_session_etching_plate,
     set_session_seed,
 )
 from forge.reference_image import remove_staged_reference_image
@@ -48,6 +49,59 @@ def _job_assets(row: Any) -> list[dict[str, Any]]:
     value = json.loads(str(row["result_json"]))
     assets = value.get("assets") if isinstance(value, dict) else None
     return [dict(item) for item in assets or [] if isinstance(item, dict)]
+
+
+def _render_inverse_print_plate(seed_work: Path, destination_root: Path) -> Path:
+    destination_root.mkdir(parents=True, exist_ok=True)
+    plate = destination_root / "etching-plate-inverse.png"
+    temp_plate = destination_root / ".etching-plate-inverse.tmp.png"
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            str(seed_work),
+            "-vf",
+            "hflip,negate",
+            "-frames:v",
+            "1",
+            str(temp_plate),
+        ],
+        check=True,
+        timeout=120,
+    )
+    temp_plate.replace(plate)
+    return plate
+
+
+def create_inverse_print_plate(config: Config, *, session_id: str) -> dict[str, str]:
+    session = get_creative_session(config, session_id)
+    if not session:
+        raise RuntimeError("Creative session not found.")
+    seed_ref = str(session["seed_work_ref"] or "").strip()
+    if not seed_ref:
+        raise RuntimeError("Select a Seed Work before creating the inverse print plate.")
+    seed_work = _safe_library_path(config, seed_ref)
+    if not seed_work.is_file():
+        raise RuntimeError("Seed Work file is missing from Forge Data.")
+
+    destination_root = config.library_root / "works" / session_id
+    plate = _render_inverse_print_plate(seed_work, destination_root)
+    plate_ref = plate.relative_to(config.data_root).as_posix()
+    plate_sha256 = _sha256(plate)
+    set_session_etching_plate(
+        config,
+        session_id,
+        etching_plate_ref=plate_ref,
+        etching_plate_sha256=plate_sha256,
+    )
+    return {
+        "etching_plate_ref": plate_ref,
+        "etching_plate_sha256": plate_sha256,
+    }
 
 
 def promote_seed_work(
@@ -120,28 +174,8 @@ def promote_seed_work(
 
     # Plate-preparation artwork is deterministic: horizontally reverse the image
     # so the transferred print reads in the Seed Work orientation, and invert its
-    # tonal polarity for the etching plate preparation image. Never mutate the Seed.
-    etching_plate = destination_root / "etching-plate-inverse.png"
-    temp_etching_plate = destination_root / ".etching-plate-inverse.tmp.png"
-    subprocess.run(
-        [
-            "ffmpeg",
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-y",
-            "-i",
-            str(seed_work),
-            "-vf",
-            "hflip,negate",
-            "-frames:v",
-            "1",
-            str(temp_etching_plate),
-        ],
-        check=True,
-        timeout=120,
-    )
-    temp_etching_plate.replace(etching_plate)
+    # tonal polarity for the physical plate-preparation image. Never mutate the Seed.
+    etching_plate = _render_inverse_print_plate(seed_work, destination_root)
 
     seed_ref = seed_work.relative_to(config.data_root).as_posix()
     thumbnail_ref = thumbnail.relative_to(config.data_root).as_posix()
