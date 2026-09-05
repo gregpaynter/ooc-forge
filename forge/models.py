@@ -70,11 +70,35 @@ REFERENCE_VIDEO_MODEL = {
     ],
 }
 
+REFERENCE_AUDIO_MODEL = {
+    "id": "stable-audio-3-medium-base",
+    "name": "Stable Audio 3 Medium Base",
+    "repository_url": "https://huggingface.co/Comfy-Org/stable-audio-3",
+    "license_url": "https://huggingface.co/Comfy-Org/stable-audio-3/blob/main/README.md",
+    "files": [
+        {
+            "directory": "checkpoints",
+            "filename": "stable_audio_3_medium_base.safetensors",
+            "size_label": "about 9.22 GB",
+            "sha256": "c443fcc4d491475064cd0ff3eb92459b1e5f5060e86d96d016f048e528e24195",
+            "source_url": "https://huggingface.co/Comfy-Org/stable-audio-3/resolve/main/checkpoints/stable_audio_3_medium_base.safetensors?download=true",
+        },
+        {
+            "directory": "text_encoders",
+            "filename": "t5gemma_b_b_ul2.safetensors",
+            "size_label": "about 1.19 GB",
+            "sha256": "1e1eba25be8872edb0d3c6335c6658fd6388e7b14b60da6e454e404cfcd8150e",
+            "source_url": "https://huggingface.co/Comfy-Org/stable-audio-3/resolve/main/text_encoders/t5gemma_b_b_ul2.safetensors?download=true",
+        },
+    ],
+}
+
 BUSY_MODEL_STATES = {"QUEUED", "DOWNLOADING", "VERIFYING", "INSTALLING"}
 MODEL_INSTALL_SERVICE = "ooc-forge-model-install.service"
 UPSCALE_MODEL_INSTALL_SERVICE = "ooc-forge-upscale-model-install.service"
 PROMPT_MODEL_INSTALL_SERVICE = "ooc-forge-prompt-model-install.service"
 VIDEO_MODEL_INSTALL_SERVICE = "ooc-forge-video-model-install.service"
+AUDIO_MODEL_INSTALL_SERVICE = "ooc-forge-audio-model-install.service"
 
 
 def _status(path: Path) -> dict[str, Any]:
@@ -103,6 +127,10 @@ def video_model_install_status(config: Config) -> dict[str, Any]:
     return _status(config.data_root / "maintenance" / "video-model-install-status.json")
 
 
+def audio_model_install_status(config: Config) -> dict[str, Any]:
+    return _status(config.data_root / "maintenance" / "audio-model-install-status.json")
+
+
 def prompt_model_path(config: Config) -> Path:
     return config.data_root / str(REFERENCE_PROMPT_MODEL["path"])
 
@@ -115,6 +143,13 @@ def video_model_ready(config: Config) -> bool:
     return all(
         (config.data_root / "models" / str(item["directory"]) / str(item["filename"])).is_file()
         for item in REFERENCE_VIDEO_MODEL["files"]
+    )
+
+
+def audio_model_ready(config: Config) -> bool:
+    return all(
+        (config.data_root / "models" / str(item["directory"]) / str(item["filename"])).is_file()
+        for item in REFERENCE_AUDIO_MODEL["files"]
     )
 
 
@@ -146,6 +181,10 @@ def video_model_install_running() -> bool:
     return _service_running(VIDEO_MODEL_INSTALL_SERVICE)
 
 
+def audio_model_install_running() -> bool:
+    return _service_running(AUDIO_MODEL_INSTALL_SERVICE)
+
+
 def _request_install(*, status: dict[str, Any], service: str, running: bool, label: str) -> None:
     state = str(status.get("state") or "").upper()
     if state in BUSY_MODEL_STATES and running:
@@ -171,3 +210,7 @@ def request_reference_prompt_model_install(config: Config) -> None:
 
 def request_reference_video_model_install(config: Config) -> None:
     _request_install(status=video_model_install_status(config), service=VIDEO_MODEL_INSTALL_SERVICE, running=video_model_install_running(), label="Video model stack")
+
+
+def request_reference_audio_model_install(config: Config) -> None:
+    _request_install(status=audio_model_install_status(config), service=AUDIO_MODEL_INSTALL_SERVICE, running=audio_model_install_running(), label="Audio model stack")
