@@ -17,13 +17,20 @@ from forge.prompt_compiler import compile_video_prompt
 VIDEO_WORKFLOW_ID = "video-wan22-ti2v"
 VIDEO_NEGATIVE_PROMPT = (
     "oversaturated, overexposed, static, blurry, subtitles, text, watermark, low quality, "
-    "distorted anatomy, duplicate subjects, abrupt scene change, identity drift, flicker"
+    "distorted anatomy, duplicate subjects, abrupt scene change, identity drift, flicker, "
+    "restyled medium, palette drift, texture drift, rendering style drift"
 )
+AESTHETIC_LOCK = (
+    "The supplied Seed Work is the visual authority. Preserve its medium, palette, texture, "
+    "line quality, rendering style, compositional language, visual density and atmosphere. "
+    "Animate the Work; do not restyle or reinterpret its aesthetic."
+)
+
 VIDEO_PROFILES: dict[str, dict[str, Any]] = {
     "draft": {
         "label": "Draft preview",
-        "width": 832,
-        "height": 480,
+        "width": 768,
+        "height": 432,
         "fps": 16,
         "steps": 16,
         "master_preset": "veryfast",
@@ -33,7 +40,7 @@ VIDEO_PROFILES: dict[str, dict[str, Any]] = {
     "production": {
         "label": "Production 720p",
         "width": 1280,
-        "height": 704,
+        "height": 720,
         "fps": 24,
         "steps": 20,
         "master_preset": "slow",
@@ -42,12 +49,103 @@ VIDEO_PROFILES: dict[str, dict[str, Any]] = {
     },
 }
 
+VIDEO_DIMENSIONS: dict[str, dict[str, tuple[int, int]]] = {
+    "draft": {
+        "1:1": (768, 768),
+        "4:3_landscape": (832, 624),
+        "4:3_portrait": (624, 832),
+        "16:9_landscape": (768, 432),
+        "16:9_portrait": (432, 768),
+    },
+    "production": {
+        "1:1": (1024, 1024),
+        "4:3_landscape": (1024, 768),
+        "4:3_portrait": (768, 1024),
+        "16:9_landscape": (1280, 720),
+        "16:9_portrait": (720, 1280),
+    },
+}
+
+MOBILE_DIMENSIONS: dict[str, tuple[int, int]] = {
+    "1:1": (720, 720),
+    "4:3_landscape": (720, 540),
+    "4:3_portrait": (540, 720),
+    "16:9_landscape": (704, 396),
+    "16:9_portrait": (396, 704),
+}
+
 
 def video_profile(name: str) -> dict[str, Any]:
     key = str(name or "production").strip().lower()
     if key not in VIDEO_PROFILES:
         raise RuntimeError(f"Unknown video quality profile: {key}")
     return dict(VIDEO_PROFILES[key], id=key)
+
+
+def _classify_seed_geometry(width: int, height: int) -> dict[str, Any]:
+    if width <= 0 or height <= 0:
+        raise RuntimeError("Seed Work dimensions are invalid.")
+    if abs(width - height) <= max(width, height) * 0.01:
+        return {
+            "key": "1:1",
+            "aspect_ratio": "1:1",
+            "orientation": "square",
+            "seed_width": width,
+            "seed_height": height,
+        }
+
+    landscape = width > height
+    ratio = (width / height) if landscape else (height / width)
+    if abs(ratio - (4 / 3)) <= 0.02:
+        aspect = "4:3"
+    elif abs(ratio - (16 / 9)) <= 0.02:
+        aspect = "16:9"
+    else:
+        raise RuntimeError(
+            "Seed Work must be 1:1, 4:3 or 16:9 in portrait or landscape before video generation."
+        )
+    orientation = "landscape" if landscape else "portrait"
+    return {
+        "key": f"{aspect}_{orientation}",
+        "aspect_ratio": aspect,
+        "orientation": orientation,
+        "seed_width": width,
+        "seed_height": height,
+    }
+
+
+def video_dimensions(profile_name: str, seed_width: int, seed_height: int) -> tuple[int, int, dict[str, Any]]:
+    profile = video_profile(profile_name)
+    geometry = _classify_seed_geometry(seed_width, seed_height)
+    width, height = VIDEO_DIMENSIONS[str(profile["id"])][str(geometry["key"])]
+    return width, height, geometry
+
+
+def _image_dimensions(path: Path) -> tuple[int, int]:
+    result = subprocess.run(
+        [
+            "ffprobe",
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "stream=width,height",
+            "-of",
+            "csv=p=0:s=x",
+            str(path),
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=30,
+    )
+    value = result.stdout.strip().splitlines()[0] if result.stdout.strip() else ""
+    try:
+        width_text, height_text = value.split("x", 1)
+        return int(width_text), int(height_text)
+    except (ValueError, IndexError) as error:
+        raise RuntimeError("Could not determine Seed Work dimensions.") from error
 
 
 def _sha256(path: Path) -> str:
@@ -198,7 +296,7 @@ def _assemble_master(
         concat.unlink(missing_ok=True)
 
 
-def _make_mobile(master: Path, destination: Path) -> None:
+def _make_mobile(master: Path, destination: Path, *, width: int, height: int) -> None:
     subprocess.run(
         [
             "ffmpeg",
@@ -210,7 +308,7 @@ def _make_mobile(master: Path, destination: Path) -> None:
             str(master),
             "-an",
             "-vf",
-            "scale=720:-2:force_original_aspect_ratio=decrease",
+            f"scale={width}:{height}",
             "-c:v",
             "libx264",
             "-preset",
@@ -245,11 +343,11 @@ def render_video_derivative(
         raise RuntimeError("Video derivative requires the Seed Work and original creative prompt.")
 
     profile = video_profile(str(request.get("quality_profile") or "production"))
-    width = int(profile["width"])
-    height = int(profile["height"])
     fps = int(profile["fps"])
     steps = int(profile["steps"])
     source = _safe_library_source(config, source_ref)
+    seed_width, seed_height = _image_dimensions(source)
+    width, height, seed_geometry = video_dimensions(str(profile["id"]), seed_width, seed_height)
     duration = max(1.0, min(600.0, float(request.get("duration_seconds") or 30)))
     user_video_prompt = str(request.get("user_video_prompt") or "").strip()
 
@@ -258,7 +356,7 @@ def render_video_derivative(
         job_id,
         stage="PLANNING",
         percent=3,
-        message=f"Deriving temporal direction and shot plan for {profile['label']}.",
+        message=f"Deriving temporal direction while preserving the Seed Work aesthetic for {profile['label']}.",
     )
     prompt_plan = compile_video_prompt(
         config,
@@ -278,8 +376,9 @@ def render_video_derivative(
         stage="PREPARING",
         percent=8,
         message=(
-            f"Shot plan ready. Preparing Wan2.2 {profile['label']} generation "
-            f"at {width}×{height}, {fps} fps, {steps} steps."
+            f"Shot plan ready. Seed geometry is {seed_geometry['aspect_ratio']} "
+            f"{seed_geometry['orientation']}; preparing Wan2.2 at {width}×{height}, "
+            f"{fps} fps, {steps} steps."
         ),
         current=0,
         total=len(prompt_plan["shots"]),
@@ -311,6 +410,7 @@ def render_video_derivative(
         segment_prompt = (
             f"{prompt_plan['resolved_video_prompt']}\n"
             f"Current shot: {shot['instruction']}\n"
+            f"Aesthetic lock: {AESTHETIC_LOCK}\n"
             "Maintain exact subject and visual continuity from the supplied starting frame."
         )
         try:
@@ -393,30 +493,40 @@ def render_video_derivative(
             "fps": fps,
             "steps": steps,
             "profile": str(profile["id"]),
+            "aspect_ratio": str(seed_geometry["aspect_ratio"]),
+            "orientation": str(seed_geometry["orientation"]),
         },
     )
     assets = [master_asset]
     mobile_asset: dict[str, Any] | None = None
     if bool(profile["mobile"]):
         mobile = root / "video-mobile.mp4"
+        mobile_width, mobile_height = MOBILE_DIMENSIONS[str(seed_geometry["key"])]
         update_job_progress(
             config,
             job_id,
             stage="TRANSCODING",
             percent=94,
-            message="Creating the mobile rendition from the high-quality master.",
+            message=(
+                f"Creating the {mobile_width}×{mobile_height} mobile rendition "
+                "with the Seed Work aspect ratio unchanged."
+            ),
             current=total_shots,
             total=total_shots,
         )
-        _make_mobile(master, mobile)
+        _make_mobile(master, mobile, width=mobile_width, height=mobile_height)
         mobile_asset = _asset(
             mobile,
             config,
             role="video_mobile",
             extra={
                 "duration_seconds": duration,
-                "profile": "mobile-h264-720",
+                "width": mobile_width,
+                "height": mobile_height,
+                "profile": "mobile-h264",
                 "source_profile": str(profile["id"]),
+                "aspect_ratio": str(seed_geometry["aspect_ratio"]),
+                "orientation": str(seed_geometry["orientation"]),
             },
         )
         assets.append(mobile_asset)
@@ -426,7 +536,7 @@ def render_video_derivative(
         job_id,
         stage="FINALISING",
         percent=99,
-        message="Finalising video assets and generation provenance.",
+        message="Finalising video assets and Seed-locked generation provenance.",
         current=total_shots,
         total=total_shots,
     )
@@ -449,8 +559,10 @@ def render_video_derivative(
             "duration_seconds": duration,
             "fps": fps,
             "steps": steps,
+            "seed_geometry": seed_geometry,
             "generation_width": width,
             "generation_height": height,
+            "aesthetic_policy": AESTHETIC_LOCK,
             "segments": segment_evidence,
             "primary_ref": master_asset["relative_path"],
             "master_ref": master_asset["relative_path"] if is_production else None,
@@ -466,6 +578,7 @@ def render_video_derivative(
         "assets": assets,
         "media_ref": master_asset["relative_path"],
         "video_prompt": prompt_plan,
+        "seed_geometry": seed_geometry,
         "generation_evidence": evidence,
     }
     if is_production:
