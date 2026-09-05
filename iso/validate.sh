@@ -29,7 +29,8 @@ bash -n \
   "$ROOT_DIR/scripts/install-prompt-runtime" \
   "$ROOT_DIR/scripts/ooc-forge-appliance-policy" \
   "$ROOT_DIR/scripts/ooc-forge-prompt-model-install" \
-  "$ROOT_DIR/scripts/ooc-forge-video-model-install"
+  "$ROOT_DIR/scripts/ooc-forge-video-model-install" \
+  "$ROOT_DIR/scripts/ooc-forge-audio-model-install"
 
 contains '--distribution trixie' "$ROOT_DIR/iso/auto/config"
 contains '--architectures amd64' "$ROOT_DIR/iso/auto/config"
@@ -49,8 +50,11 @@ contains 'install-comfyui-runtime' "$HOOK"
 contains 'install-prompt-runtime' "$HOOK"
 contains 'manual-image-reference' "$HOOK"
 contains 'video-wan22-ti2v' "$HOOK"
+contains 'audio-stable-audio3' "$HOOK"
 contains 'ooc-forge-prompt-model-install.service' "$HOOK"
 contains 'ooc-forge-video-model-install.service' "$HOOK"
+contains 'ooc-forge-audio-model-install.service' "$HOOK"
+contains 'ooc-forge-audio-model-install" /usr/local/sbin/ooc-forge-audio-model-install' "$HOOK"
 contains 'systemctl enable comfyui.service' "$HOOK"
 contains 'systemctl enable ssh.service' "$HOOK"
 contains 'rm -f /etc/ssh/ssh_host_' "$HOOK"
@@ -69,6 +73,11 @@ contains 'https://download.pytorch.org/whl/cu126' "$ROOT_DIR/scripts/comfyui-run
 line_is 'LLAMA_CPP_VERSION=v0.4.0' "$ROOT_DIR/scripts/prompt-runtime.env"
 line_is 'LLAMA_CPP_COMMIT=427291b5b34cd914a31b3fd3b61a68f6184f4b9f' "$ROOT_DIR/scripts/prompt-runtime.env"
 contains 'GGML_CUDA=OFF' "$ROOT_DIR/scripts/install-prompt-runtime"
+
+contains 'stable_audio_3_medium_base.safetensors' "$ROOT_DIR/scripts/ooc-forge-audio-model-install"
+contains 't5gemma_b_b_ul2.safetensors' "$ROOT_DIR/scripts/ooc-forge-audio-model-install"
+contains 'c443fcc4d491475064cd0ff3eb92459b1e5f5060e86d96d016f048e528e24195' "$ROOT_DIR/scripts/ooc-forge-audio-model-install"
+contains '1e1eba25be8872edb0d3c6335c6658fd6388e7b14b60da6e454e404cfcd8150e' "$ROOT_DIR/scripts/ooc-forge-audio-model-install"
 
 contains 'ssh-keygen -A' "$ROOT_DIR/scripts/ooc-forge-appliance-policy"
 contains 'deb https://deb.debian.org/debian trixie' "$ROOT_DIR/scripts/ooc-forge-appliance-policy"
@@ -93,13 +102,11 @@ if grep -Fq 'sha256sum "$ISO_OUTPUT" > "$ISO_OUTPUT.sha256"' "$ROOT_DIR/iso/buil
   exit 1
 fi
 
-if grep -Fq 'systemctl enable ooc-forge-prompt-model-install.service' "$HOOK"; then
-  echo "Prompt model installer must remain on-demand, not boot-enabled." >&2
-  exit 1
-fi
-if grep -Fq 'systemctl enable ooc-forge-video-model-install.service' "$HOOK"; then
-  echo "Video model installer must remain on-demand, not boot-enabled." >&2
-  exit 1
-fi
+for service in ooc-forge-prompt-model-install ooc-forge-video-model-install ooc-forge-audio-model-install; do
+  if grep -Fq "systemctl enable $service.service" "$HOOK"; then
+    echo "$service must remain on-demand, not boot-enabled." >&2
+    exit 1
+  fi
+done
 
 echo "OOC Forge ISO configuration valid."
