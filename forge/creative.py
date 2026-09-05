@@ -16,6 +16,7 @@ from forge.db import (
     list_session_jobs,
     set_session_seed,
 )
+from forge.reference_image import remove_staged_reference_image
 
 
 def _sha256(path: Path) -> str:
@@ -210,6 +211,7 @@ def delete_session_and_files(config: Config, session_id: str) -> None:
                     pass
 
     _safe_remove_tree(config, config.library_root / "works" / session_id)
+    remove_staged_reference_image(config, session_id)
     for row in jobs:
         job_id = str(row["id"])
         _safe_remove_tree(config, config.library_root / "studies" / job_id)
