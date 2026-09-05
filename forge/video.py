@@ -10,7 +10,7 @@ from typing import Any
 from forge import __version__
 from forge.comfy import ComfyClient, load_workflow, output_references
 from forge.config import Config
-from forge.db import utc_now
+from forge.db import update_job_progress, utc_now
 from forge.prompt_compiler import compile_video_prompt
 
 
@@ -209,6 +209,14 @@ def render_video_derivative(
     source = _safe_library_source(config, source_ref)
     duration = max(1.0, min(600.0, float(request.get("duration_seconds") or 30)))
     user_video_prompt = str(request.get("user_video_prompt") or "").strip()
+
+    update_job_progress(
+        config,
+        job_id,
+        stage="PLANNING",
+        percent=3,
+        message="Deriving temporal direction and shot plan with the local Qwen director.",
+    )
     prompt_plan = compile_video_prompt(
         config,
         creative_prompt=creative_prompt,
@@ -221,13 +229,33 @@ def render_video_derivative(
     root.mkdir(parents=True, exist_ok=True)
     segments_root.mkdir(parents=True, exist_ok=True)
     client = ComfyClient(config)
+    update_job_progress(
+        config,
+        job_id,
+        stage="PREPARING",
+        percent=8,
+        message="Shot plan ready. Preparing Wan2.2 video generation.",
+        current=0,
+        total=len(prompt_plan["shots"]),
+    )
     client.health()
     timeout = int(request.get("timeout_seconds") or 7200)
 
     current_start = source
     segments: list[Path] = []
     segment_evidence: list[dict[str, Any]] = []
+    total_shots = len(prompt_plan["shots"])
     for index, shot in enumerate(prompt_plan["shots"], start=1):
+        progress_before = 10 + int(((index - 1) / max(1, total_shots)) * 72)
+        update_job_progress(
+            config,
+            job_id,
+            stage="GENERATING",
+            percent=progress_before,
+            message=f"Generating Wan2.2 shot {index} of {total_shots}.",
+            current=index,
+            total=total_shots,
+        )
         input_name = f"ooc-video-{job_id}-{index:03d}{current_start.suffix.lower() or '.png'}"
         comfy_input = config.data_root / "comfyui-input" / input_name
         shutil.copy2(current_start, comfy_input)
@@ -269,11 +297,48 @@ def render_video_derivative(
                 "segment_ref": segment.relative_to(config.data_root).as_posix(),
             }
         )
+        progress_after = 10 + int((index / max(1, total_shots)) * 72)
+        update_job_progress(
+            config,
+            job_id,
+            stage="GENERATING",
+            percent=progress_after,
+            message=f"Completed shot {index} of {total_shots}; continuity frame prepared.",
+            current=index,
+            total=total_shots,
+        )
 
     master = root / "video-master.mp4"
     mobile = root / "video-mobile.mp4"
+    update_job_progress(
+        config,
+        job_id,
+        stage="ASSEMBLING",
+        percent=86,
+        message=f"Assembling {total_shots} generated shots into the high-quality master.",
+        current=total_shots,
+        total=total_shots,
+    )
     _assemble_master(segments, master, duration)
+    update_job_progress(
+        config,
+        job_id,
+        stage="TRANSCODING",
+        percent=94,
+        message="Creating the mobile rendition from the high-quality master.",
+        current=total_shots,
+        total=total_shots,
+    )
     _make_mobile(master, mobile)
+    update_job_progress(
+        config,
+        job_id,
+        stage="FINALISING",
+        percent=99,
+        message="Finalising video assets and generation provenance.",
+        current=total_shots,
+        total=total_shots,
+    )
 
     master_asset = _asset(
         master,
