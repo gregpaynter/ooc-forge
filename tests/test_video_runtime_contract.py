@@ -30,7 +30,7 @@ def test_prompt_compiler_runtime_is_pinned_and_cpu_only():
     assert "/usr/local/bin/ooc-llama-cli" in installer
 
 
-def test_prompt_and_video_models_are_verified_and_on_demand():
+def test_prompt_video_and_audio_models_are_verified_and_on_demand():
     prompt = read("scripts/ooc-forge-prompt-model-install")
     assert "Qwen3-1.7B-Q4_K_M.gguf" in prompt
     assert "d2387ca2dbfee2ffabce7120d3770dadca0b293052bc2f0e138fdc940d9bc7b5" in prompt
@@ -50,9 +50,20 @@ def test_prompt_and_video_models_are_verified_and_on_demand():
     assert "Checksum mismatch for $filename; retrying one clean download from byte zero." in video
     assert "did not match after a clean retry" in video
 
+    audio = read("scripts/ooc-forge-audio-model-install")
+    assert "stable_audio_3_medium_base.safetensors" in audio
+    assert "t5gemma_b_b_ul2.safetensors" in audio
+    assert "c443fcc4d491475064cd0ff3eb92459b1e5f5060e86d96d016f048e528e24195" in audio
+    assert "1e1eba25be8872edb0d3c6335c6658fd6388e7b14b60da6e454e404cfcd8150e" in audio
+    assert "--continue-at -" in audio
+    assert "sha256sum" in audio
+    assert "Checksum mismatch for $filename; retrying one clean download from byte zero." in audio
+    assert "did not match after a clean retry" in audio
+
     sudoers = read("systemd/ooc-forge-maintenance.sudoers")
     assert "systemctl --no-block start ooc-forge-prompt-model-install.service" in sudoers
     assert "systemctl --no-block start ooc-forge-video-model-install.service" in sudoers
+    assert "systemctl --no-block start ooc-forge-audio-model-install.service" in sudoers
 
 
 def test_video_workflow_is_native_wan_seed_work_i2v():
@@ -70,29 +81,63 @@ def test_video_workflow_is_native_wan_seed_work_i2v():
     assert '"fps"' in manifest
 
 
-def test_local_install_owns_prompt_runtime_video_and_reference_workflows():
+def test_audio_workflow_is_native_stable_audio3():
+    workflow = read("workflows/audio-stable-audio3/workflow.json")
+    manifest = read("workflows/audio-stable-audio3/manifest.json")
+    assert '"class_type": "CheckpointLoaderSimple"' in workflow
+    assert '"class_type": "CLIPLoader"' in workflow
+    assert '"type": "stable_audio"' in workflow
+    assert '"class_type": "EmptyLatentAudio"' in workflow
+    assert '"class_type": "VAEDecodeAudio"' in workflow
+    assert '"class_type": "SaveAudio"' in workflow
+    assert "stable_audio_3_medium_base.safetensors" in workflow
+    assert "t5gemma_b_b_ul2.safetensors" in workflow
+    assert '"duration_seconds"' in manifest
+    assert '"prompt"' in manifest
+    assert '"seed"' in manifest
+
+
+def test_local_install_owns_prompt_video_audio_and_reference_workflows():
     installer = read("scripts/install-local.sh")
     assert "cmake ffmpeg" in installer
-    for workflow in ("manual-image", "manual-image-reference", "print-upscale", "video-wan22-ti2v"):
+    for workflow in (
+        "manual-image",
+        "manual-image-reference",
+        "print-upscale",
+        "video-wan22-ti2v",
+        "audio-stable-audio3",
+    ):
         assert workflow in installer
     assert '"$SOURCE_DIR/scripts/install-prompt-runtime"' in installer
     assert_looped_service_installed(installer, "ooc-forge-prompt-model-install")
     assert_looped_service_installed(installer, "ooc-forge-video-model-install")
+    assert_looped_service_installed(installer, "ooc-forge-audio-model-install")
+    assert 'ooc-forge-audio-model-install" /usr/local/sbin/ooc-forge-audio-model-install' in installer
 
 
-def test_iso_owns_prompt_runtime_reference_and_video_contract_without_model_weights():
+def test_iso_owns_prompt_reference_video_and_audio_contract_without_model_weights():
     packages = read("iso/config/package-lists/forge.list.chroot").splitlines()
     assert "cmake" in packages
     hook = read("iso/config/hooks/live/010-ooc-forge-runtime.hook.chroot")
-    for workflow in ("manual-image", "manual-image-reference", "print-upscale", "video-wan22-ti2v"):
+    for workflow in (
+        "manual-image",
+        "manual-image-reference",
+        "print-upscale",
+        "video-wan22-ti2v",
+        "audio-stable-audio3",
+    ):
         assert workflow in hook
     assert '"$SOURCE_DIR/scripts/install-prompt-runtime"' in hook
     assert_looped_service_installed(hook, "ooc-forge-prompt-model-install")
     assert_looped_service_installed(hook, "ooc-forge-video-model-install")
+    assert_looped_service_installed(hook, "ooc-forge-audio-model-install")
     assert "systemctl enable ooc-forge-prompt-model-install.service" not in hook
     assert "systemctl enable ooc-forge-video-model-install.service" not in hook
+    assert "systemctl enable ooc-forge-audio-model-install.service" not in hook
     # Model weights are managed after install; only verified installer metadata belongs in the ISO.
-    assert "wan2.2_ti2v_5B_fp16.safetensors" not in read("iso/config/package-lists/forge.list.chroot")
+    package_list = read("iso/config/package-lists/forge.list.chroot")
+    assert "wan2.2_ti2v_5B_fp16.safetensors" not in package_list
+    assert "stable_audio_3_medium_base.safetensors" not in package_list
 
 
 def test_auto_refresh_pauses_while_operator_edits_forms():
