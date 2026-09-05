@@ -1,13 +1,20 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
 from forge.config import Config
 from forge.health import capabilities
 from forge.models import REFERENCE_PROMPT_MODEL, REFERENCE_VIDEO_MODEL
-from forge.prompt_compiler import _extract_json, _normalise_shots
+from forge.prompt_compiler import (
+    MAX_OUTPUT_TOKENS,
+    PROMPT_TIMEOUT_SECONDS,
+    _extract_json,
+    _normalise_shots,
+    compile_video_prompt,
+)
 from forge.video import VIDEO_PROFILES, _frames_for_duration, video_profile
 
 
@@ -50,6 +57,31 @@ def test_shot_plan_covers_duration_with_max_five_second_segments():
     assert round(sum(float(item["duration"]) for item in shots), 6) == 12.0
     assert all(1.0 <= float(item["duration"]) <= 5.0 for item in shots)
     assert shots[0]["instruction"] == "push forward"
+
+
+def test_prompt_compiler_timeout_uses_deterministic_fallback(monkeypatch, tmp_path):
+    config = make_config(tmp_path)
+    monkeypatch.setattr("forge.prompt_compiler.prompt_model_ready", lambda cfg: True)
+
+    def timeout_run(command, **kwargs):
+        raise subprocess.TimeoutExpired(command, kwargs["timeout"])
+
+    monkeypatch.setattr("forge.prompt_compiler.subprocess.run", timeout_run)
+    result = compile_video_prompt(
+        config,
+        creative_prompt="ball in the forest, woodblock print",
+        user_video_prompt="turns into moonface",
+        duration_seconds=30,
+    )
+
+    assert MAX_OUTPUT_TOKENS == 384
+    assert PROMPT_TIMEOUT_SECONDS == 120
+    assert result["compiler"]["mode"] == "deterministic_fallback"
+    assert "120 seconds" in result["compiler"]["fallback_reason"]
+    assert result["user_video_prompt"] == "turns into moonface"
+    assert len(result["shots"]) == 6
+    assert sum(float(item["duration"]) for item in result["shots"]) == 30.0
+    assert all(float(item["duration"]) <= 5.0 for item in result["shots"])
 
 
 def test_wan_frame_count_is_4n_plus_1_and_covers_planned_duration():
