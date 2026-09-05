@@ -73,7 +73,7 @@ for spec in "${FILES[@]}"; do
   fi
 
   write_status INSTALLING "Installing verified $filename into persistent Forge Data." "$filename"
-  chown "$FORGE_USER:$FORGE_USER" "$part"; chmod 0644 "$PART" 2>/dev/null || true
+  chown "$FORGE_USER:$FORGE_USER" "$part"
   chmod 0644 "$part"
   mv "$part" "$target"
 done
