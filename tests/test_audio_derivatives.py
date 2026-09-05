@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -61,7 +60,7 @@ def test_audio_checkpoint_is_not_offered_as_image_checkpoint(tmp_path):
     assert installed_checkpoints(config) == ["sd_xl_base_1.0.safetensors"]
 
 
-def test_audio_workflow_loads_explicit_non_image_checkpoint(tmp_path):
+def test_audio_workflow_loads_explicit_non_image_checkpoint_and_duration_conditioning(tmp_path):
     config = make_config(tmp_path)
     install_audio_workflow(config)
     checkpoint_root = config.data_root / "models" / "checkpoints"
@@ -75,6 +74,7 @@ def test_audio_workflow_loads_explicit_non_image_checkpoint(tmp_path):
         config,
         "audio-stable-audio3",
         {
+            "kind": "audio_from_seed",
             "checkpoint": "stable_audio_3_medium_base.safetensors",
             "prompt": "dark ambient forest",
             "duration_seconds": 12.0,
@@ -85,6 +85,11 @@ def test_audio_workflow_loads_explicit_non_image_checkpoint(tmp_path):
     assert workflow["2"]["inputs"]["clip_name"] == "t5gemma_b_b_ul2.safetensors"
     assert workflow["2"]["inputs"]["type"] == "stable_audio"
     assert workflow["5"]["inputs"]["seconds"] == 12.0
+    assert workflow["9"]["class_type"] == "ConditioningStableAudio"
+    assert workflow["9"]["inputs"]["seconds_start"] == 0.0
+    assert workflow["9"]["inputs"]["seconds_total"] == 12.0
+    assert workflow["6"]["inputs"]["positive"] == ["9", 0]
+    assert workflow["6"]["inputs"]["negative"] == ["9", 1]
     assert workflow["6"]["inputs"]["seed"] == 123
 
 
