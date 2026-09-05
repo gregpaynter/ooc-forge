@@ -20,6 +20,7 @@ from forge.models import (
     video_model_install_status,
     video_model_ready,
 )
+from forge.video import VIDEO_PROFILES
 
 
 bp = Blueprint("video_derivative", __name__)
@@ -120,6 +121,10 @@ def create_video(session_id: str):
         return redirect(url_for("creative_session", session_id=session_id))
     duration = max(1.0, min(600.0, duration))
     user_direction = request.form.get("user_video_prompt", "").strip()
+    quality_profile = request.form.get("quality_profile", "production").strip().lower()
+    if quality_profile not in VIDEO_PROFILES:
+        flash("Select a valid video quality profile.")
+        return redirect(url_for("creative_session", session_id=session_id))
     create_job(
         config,
         source="LOCAL",
@@ -131,10 +136,12 @@ def create_video(session_id: str):
             "creative_prompt": str(creative["prompt"]),
             "user_video_prompt": user_direction,
             "duration_seconds": duration,
+            "quality_profile": quality_profile,
         },
         creative_session_id=session_id,
         parent_job_id=str(creative["seed_source_job_id"] or "") or None,
         derivative_type="video",
     )
-    flash("Video Experience queued. Forge will derive the temporal prompt and shot plan locally.")
+    label = str(VIDEO_PROFILES[quality_profile]["label"])
+    flash(f"{label} video queued. Forge will derive the temporal prompt and shot plan locally.")
     return redirect(url_for("creative_session", session_id=session_id))
