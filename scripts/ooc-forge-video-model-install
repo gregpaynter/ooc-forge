@@ -15,7 +15,7 @@ LAST_STATE=QUEUED
 FILES=(
   'diffusion_models|wan2.2_ti2v_5B_fp16.safetensors|456f901338bd9eadbded3828b819109a9b68e8a525ca5cf8d0049a69fcfeca1e|https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/main/split_files/diffusion_models/wan2.2_ti2v_5B_fp16.safetensors?download=true'
   'vae|wan2.2_vae.safetensors|e40321bd36b9709991dae2530eb4ac303dd168276980d3e9bc4b6e2b75fed156|https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/main/split_files/vae/wan2.2_vae.safetensors?download=true'
-  'text_encoders|umt5_xxl_fp8_e4m3fn_scaled.safetensors|c3355d30191f1f066b26d93fba017ae9809dce6c627dda5f6a66eaa651204f68|https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors?download=true'
+  'text_encoders|umt5_xxl_fp8_e4m3fn_scaled.safetensors|c3355d30191f1f066b26d93fba017ae9809dce6c627dda5f6a66eaa651204f68|https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/main/split_files/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors?download=true'
 )
 
 write_status() {
@@ -31,6 +31,12 @@ t=p.with_name(f".{p.name}.tmp"); t.write_text(json.dumps(value,indent=2)+"\n",en
 PY
   chown "$FORGE_USER:$FORGE_USER" "$STATUS"
 }
+
+sha_matches() {
+  local path=$1 expected=$2
+  [[ -f "$path" ]] && [[ "$(sha256sum "$path" | awk '{print $1}')" == "$expected" ]]
+}
+
 trap 'rc=$?; [[ "$LAST_STATE" == FAILED || "$LAST_STATE" == COMPLETED ]] || write_status FAILED "Wan2.2 video stack installation failed. Inspect journalctl -u ooc-forge-video-model-install.service."; exit $rc' ERR
 
 write_status QUEUED "Preparing the Wan2.2 TI2V 5B video model stack."
@@ -42,16 +48,34 @@ for spec in "${FILES[@]}"; do
   target="$target_dir/$filename"
   part="$CACHE_ROOT/$filename.part"
   install -d -o "$FORGE_USER" -g "$FORGE_USER" -m 0750 "$target_dir"
+
   if [[ -f "$target" ]]; then
-    [[ "$(sha256sum "$target" | awk '{print $1}')" == "$expected" ]] || { write_status FAILED "Existing $filename has an unexpected SHA-256." "$filename"; exit 1; }
+    sha_matches "$target" "$expected" || { write_status FAILED "Existing $filename has an unexpected SHA-256." "$filename"; exit 1; }
     continue
   fi
+
   write_status DOWNLOADING "Downloading Wan2.2 video component: $filename. Downloads are resumable." "$filename"
-  curl --fail --location --retry 5 --retry-delay 2 --retry-all-errors --continue-at - --output "$part" "$url" || { rm -f "$part"; curl --fail --location --retry 5 --retry-delay 2 --retry-all-errors --output "$part" "$url"; }
+  if ! curl --fail --location --retry 5 --retry-delay 2 --retry-all-errors --continue-at - --output "$part" "$url"; then
+    rm -f "$part"
+    curl --fail --location --retry 5 --retry-delay 2 --retry-all-errors --output "$part" "$url"
+  fi
+
   write_status VERIFYING "Verifying $filename against its pinned SHA-256." "$filename"
-  [[ "$(sha256sum "$part" | awk '{print $1}')" == "$expected" ]] || { rm -f "$part"; write_status FAILED "Downloaded $filename SHA-256 did not match." "$filename"; exit 1; }
+  if ! sha_matches "$part" "$expected"; then
+    # Some large-file CDNs can return an apparently successful resumed transfer
+    # whose resulting file is not byte-identical. Never weaken verification:
+    # discard the partial file and retry exactly once from byte zero.
+    rm -f "$part"
+    write_status DOWNLOADING "Checksum mismatch for $filename; retrying one clean download from byte zero." "$filename"
+    curl --fail --location --retry 5 --retry-delay 2 --retry-all-errors --output "$part" "$url"
+    write_status VERIFYING "Verifying clean retry of $filename against its pinned SHA-256." "$filename"
+    sha_matches "$part" "$expected" || { rm -f "$part"; write_status FAILED "Downloaded $filename SHA-256 did not match after a clean retry." "$filename"; exit 1; }
+  fi
+
   write_status INSTALLING "Installing verified $filename into persistent Forge Data." "$filename"
-  chown "$FORGE_USER:$FORGE_USER" "$part"; chmod 0644 "$part"; mv "$part" "$target"
+  chown "$FORGE_USER:$FORGE_USER" "$part"; chmod 0644 "$PART" 2>/dev/null || true
+  chmod 0644 "$part"
+  mv "$part" "$target"
 done
 
 systemctl try-restart comfyui.service ooc-forge-worker.service >/dev/null 2>&1 || true
