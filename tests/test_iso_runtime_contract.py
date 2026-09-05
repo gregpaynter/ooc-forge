@@ -144,12 +144,16 @@ def test_printable_work_pipeline_is_appliance_owned_and_model_verified():
     assert "systemctl --no-block start ooc-forge-upscale-model-install.service" in sudoers
 
     installer = read("scripts/install-local.sh")
-    assert "for workflow in manual-image print-upscale" in installer
+    assert "manual-image" in installer
+    assert "manual-image-reference" in installer
+    assert "print-upscale" in installer
     assert_looped_service_installed(installer, "ooc-forge-upscale-model-install")
     assert "scripts/ooc-forge-upscale-model-install" in installer
 
     hook = read("iso/config/hooks/live/010-ooc-forge-runtime.hook.chroot")
-    assert "for workflow in manual-image print-upscale" in hook
+    assert "manual-image" in hook
+    assert "manual-image-reference" in hook
+    assert "print-upscale" in hook
     assert_looped_service_installed(hook, "ooc-forge-upscale-model-install")
     assert "scripts/ooc-forge-upscale-model-install" in hook
     assert "systemctl enable ooc-forge-upscale-model-install.service" not in hook
