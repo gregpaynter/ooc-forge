@@ -8,7 +8,12 @@ from types import SimpleNamespace
 import pytest
 
 from forge.config import Config
-from forge.creative import delete_job_and_files, delete_session_and_files, promote_seed_work
+from forge.creative import (
+    create_inverse_print_plate,
+    delete_job_and_files,
+    delete_session_and_files,
+    promote_seed_work,
+)
 from forge.db import (
     create_creative_session,
     create_job,
@@ -220,6 +225,42 @@ def test_seed_promotion_creates_stable_work_thumbnail_and_inverse_etching_plate(
     assert (config.data_root / promoted["seed_work_ref"]).exists()
     assert (config.data_root / promoted["thumbnail_ref"]).exists()
     assert (config.data_root / promoted["etching_plate_ref"]).exists()
+
+
+def test_existing_seed_can_backfill_inverse_print_plate(monkeypatch, tmp_path):
+    config = make_config(tmp_path)
+    ensure_layout(config)
+    init_db(config)
+    session_id = create_creative_session(config, title="Older Seed", prompt="prompt")
+    work_root = config.library_root / "works" / session_id
+    work_root.mkdir(parents=True)
+    seed = work_root / "seed-work.png"
+    seed.write_bytes(b"seed")
+    seed_ref = seed.relative_to(config.data_root).as_posix()
+    with sqlite3.connect(config.database_path) as connection:
+        connection.execute(
+            "UPDATE creative_sessions SET status='SEED_READY', seed_work_ref=? WHERE id=?",
+            (seed_ref, session_id),
+        )
+        connection.commit()
+
+    commands: list[list[str]] = []
+
+    def fake_run(command, check, timeout):
+        commands.append(command)
+        Path(command[-1]).write_bytes(b"inverse")
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr("forge.creative.subprocess.run", fake_run)
+    created = create_inverse_print_plate(config, session_id=session_id)
+    session = get_creative_session(config, session_id)
+
+    assert session is not None
+    assert created["etching_plate_ref"].endswith("/etching-plate-inverse.png")
+    assert session["etching_plate_ref"] == created["etching_plate_ref"]
+    assert session["etching_plate_sha256"] == created["etching_plate_sha256"]
+    assert (config.data_root / created["etching_plate_ref"]).read_bytes() == b"inverse"
+    assert any("hflip,negate" in command for command in commands)
 
 
 def test_session_delete_rejects_running_then_cleans_local_tree(tmp_path):
