@@ -221,6 +221,7 @@ def delete_job_and_files(config: Config, job_id: str) -> None:
             continue
         path.unlink(missing_ok=True)
     _safe_remove_tree(config, config.library_root / "experiences" / job_id)
+    _safe_remove_tree(config, config.library_root / "audio" / job_id)
     study_root = config.library_root / "studies" / job_id
     if study_root.exists():
         _safe_remove_tree(config, study_root)
@@ -250,5 +251,6 @@ def delete_session_and_files(config: Config, session_id: str) -> None:
         job_id = str(row["id"])
         _safe_remove_tree(config, config.library_root / "studies" / job_id)
         _safe_remove_tree(config, config.library_root / "experiences" / job_id)
+        _safe_remove_tree(config, config.library_root / "audio" / job_id)
 
     delete_creative_session_record(config, session_id)
