@@ -51,6 +51,7 @@ rollback() {
   systemctl stop ooc-forge-web.service ooc-forge-worker.service ooc-forge-sync.service >/dev/null 2>&1
   rm -rf "$INSTALL_ROOT/.venv"
   rsync -a --delete --exclude '.venv' "$ROLLBACK/source/" "$INSTALL_ROOT/"
+  chmod 0755 "$INSTALL_ROOT"
   if [[ -d "$ROLLBACK/.venv" ]]; then
     mv "$ROLLBACK/.venv" "$INSTALL_ROOT/.venv"
   fi
@@ -98,7 +99,7 @@ STAGE=$(mktemp -d "$STATE_ROOT/git-update.XXXXXX")
 SOURCE="$STAGE/source"
 VENV="$STAGE/venv"
 TEST_DATA="$STAGE/test-data"
-mkdir -p "$SOURCE"
+install -d -m 0755 "$SOURCE"
 git -C "$SOURCE" init -q
 git -C "$SOURCE" remote add origin "$REPO_URL"
 git -C "$SOURCE" fetch -q --depth=1 origin "$REF"
@@ -124,9 +125,14 @@ fi
 SWAPPED=1
 
 write_status "INSTALLING" "Installing validated Git source. Forge services will restart briefly." "$REF" "$COMMIT"
-systemctl stop ooc-forge-worker.service ooc-forge-sync.service >/dev/null 2>&1 || true
+systemctl stop ooc-forge-web.service ooc-forge-worker.service ooc-forge-sync.service >/dev/null 2>&1 || true
 rsync -a --delete --exclude '.git' --exclude '.venv' "$SOURCE/" "$INSTALL_ROOT/"
-mv "$VENV" "$INSTALL_ROOT/.venv"
+chmod 0755 "$INSTALL_ROOT"
+python3 -m venv "$INSTALL_ROOT/.venv"
+"$INSTALL_ROOT/.venv/bin/python" -m pip install -q --upgrade pip
+"$INSTALL_ROOT/.venv/bin/python" -m pip install -q "$INSTALL_ROOT"
+chgrp -R forge "$INSTALL_ROOT/.venv"
+chmod -R g+rX "$INSTALL_ROOT/.venv"
 printf '%s\n' "$COMMIT" > "$INSTALL_ROOT/.ooc-source-ref"
 
 # Immutable workflow definitions ship with the runtime; persistent model weights
