@@ -3,7 +3,8 @@ from __future__ import annotations
 import json
 import subprocess
 
-from flask import Blueprint, current_app, flash, redirect, render_template, request, session, url_for
+import requests
+from flask import Blueprint, current_app, flash, jsonify, redirect, render_template, request, session, url_for
 from werkzeug.security import check_password_hash
 
 from forge.config import Config
@@ -25,6 +26,17 @@ from forge.models import (
     video_model_install_running,
     video_model_install_status,
     video_model_ready,
+)
+from forge.submission import (
+    EXPERIENCE_ROLE,
+    WORK_IMAGE_ROLES,
+    build_submission_manifest,
+    delete_session_artifact,
+    load_submission_state,
+    present_submission,
+    select_submission_asset,
+    session_assets,
+    set_proposed_artist,
 )
 from forge.video import VIDEO_PROFILES
 
@@ -173,17 +185,20 @@ def create_video(session_id: str):
             "kind": "video_from_seed",
             "title": str(creative["title"]),
             "source_ref": str(creative["seed_work_ref"]),
+            "source_sha256": str(creative["seed_work_sha256"] or "") or None,
             "creative_prompt": str(creative["prompt"]),
             "user_video_prompt": user_direction,
             "duration_seconds": duration,
             "quality_profile": quality_profile,
+            "seed_aesthetic_locked": True,
+            "seed_geometry_locked": True,
         },
         creative_session_id=session_id,
         parent_job_id=str(creative["seed_source_job_id"] or "") or None,
         derivative_type="video",
     )
     label = str(VIDEO_PROFILES[quality_profile]["label"])
-    flash(f"{label} video queued. Forge will derive the temporal prompt and shot plan locally.")
+    flash(f"{label} video queued. Seed geometry and aesthetic are locked; your direction controls motion and transformation.")
     return redirect(url_for("creative_session", session_id=session_id))
 
 
@@ -256,4 +271,96 @@ def create_audio(session_id: str):
         flash("Audio Experience queued and linked to the latest completed Video Experience.")
     else:
         flash("Standalone Audio Experience queued.")
+    return redirect(url_for("creative_session", session_id=session_id))
+
+
+@bp.get("/sessions/<session_id>/ooc-submission")
+def submission_review(session_id: str):
+    config = _config()
+    creative = get_creative_session(config, session_id)
+    if not creative:
+        return "Creative session not found", 404
+    assets = session_assets(config, session_id)
+    state = load_submission_state(config, session_id)
+    work_images = [item for item in assets if str(item.get("role")) in WORK_IMAGE_ROLES]
+    experiences = [item for item in assets if str(item.get("role")) == EXPERIENCE_ROLE]
+    manifest = None
+    manifest_error = None
+    try:
+        manifest = build_submission_manifest(config, session_id)
+    except RuntimeError as error:
+        manifest_error = str(error)
+    return render_template(
+        "submission.html",
+        creative_session=creative,
+        assets=assets,
+        work_images=work_images,
+        experiences=experiences,
+        submission_state=state,
+        manifest=manifest,
+        manifest_error=manifest_error,
+    )
+
+
+@bp.post("/sessions/<session_id>/ooc-submission/artist")
+def submission_artist(session_id: str):
+    config = _config()
+    try:
+        set_proposed_artist(
+            config,
+            session_id,
+            artist_id=request.form.get("artist_id", ""),
+            artist_name=request.form.get("artist_name", ""),
+        )
+        flash("Proposed OOC Artist saved for this Creative Session.")
+    except RuntimeError as error:
+        flash(str(error))
+    return redirect(url_for("video_derivative.submission_review", session_id=session_id))
+
+
+@bp.post("/sessions/<session_id>/ooc-submission/select")
+def submission_select(session_id: str):
+    config = _config()
+    try:
+        select_submission_asset(
+            config,
+            session_id,
+            selection=request.form.get("selection", ""),
+            relative_path=request.form.get("relative_path", ""),
+        )
+        flash("OOC submission selection updated.")
+    except RuntimeError as error:
+        flash(str(error))
+    return redirect(url_for("video_derivative.submission_review", session_id=session_id))
+
+
+@bp.get("/sessions/<session_id>/ooc-submission/manifest")
+def submission_manifest(session_id: str):
+    try:
+        return jsonify(build_submission_manifest(_config(), session_id))
+    except RuntimeError as error:
+        return jsonify({"error": str(error)}), 400
+
+
+@bp.post("/sessions/<session_id>/ooc-submission/present")
+def submission_present(session_id: str):
+    try:
+        value = present_submission(_config(), session_id)
+        flash(f"Presented to OOC as Studio Submission {value.get('submission_id') or ''}.".strip())
+    except (RuntimeError, requests.RequestException, ValueError) as error:
+        flash(f"Could not present to OOC: {error}")
+    return redirect(url_for("video_derivative.submission_review", session_id=session_id))
+
+
+@bp.post("/sessions/<session_id>/artifacts/delete")
+def artifact_delete(session_id: str):
+    try:
+        delete_session_artifact(
+            _config(),
+            session_id,
+            request.form.get("relative_path", ""),
+        )
+        flash("Creative Session artifact deleted.")
+    except RuntimeError as error:
+        flash(str(error))
     return redirect(url_for("creative_session", session_id=session_id))
