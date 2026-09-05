@@ -12,7 +12,12 @@ from werkzeug.security import check_password_hash, generate_password_hash
 from forge import __version__
 from forge.comfy import installed_checkpoints, installed_upscale_models
 from forge.config import Config
-from forge.creative import delete_job_and_files, delete_session_and_files, promote_seed_work
+from forge.creative import (
+    create_inverse_print_plate,
+    delete_job_and_files,
+    delete_session_and_files,
+    promote_seed_work,
+)
 from forge.db import (
     create_creative_session,
     create_job,
@@ -321,7 +326,17 @@ def create_app() -> Flask:
                 source_ref=request.form.get("source_ref", ""),
                 thumbnail_max_edge=max(128, min(2048, setting_int(config, "thumbnail_max_edge", 768))),
             )
-            flash("Seed Work selected; website thumbnail and inverse etching plate created.")
+            flash("Seed Work selected; website thumbnail and inverse print plate created.")
+        except (RuntimeError, subprocess.SubprocessError) as error:
+            flash(str(error))
+        return redirect(url_for("creative_session", session_id=session_id))
+
+    @app.post("/sessions/<session_id>/plate")
+    @login_required
+    def creative_session_plate(session_id: str):
+        try:
+            create_inverse_print_plate(config, session_id=session_id)
+            flash("Print Plate — Inverse created from the exact Seed Work.")
         except (RuntimeError, subprocess.SubprocessError) as error:
             flash(str(error))
         return redirect(url_for("creative_session", session_id=session_id))
