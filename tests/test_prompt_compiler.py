@@ -1,11 +1,19 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from forge.config import Config
-from forge.prompt_compiler import PROMPT_TEMPLATE_VERSION, compile_video_prompt
+from forge.prompt_compiler import (
+    MAX_OUTPUT_TOKENS,
+    PROMPT_TEMPLATE_VERSION,
+    PROMPT_TIMEOUT_SECONDS,
+    compile_video_prompt,
+)
 
 
 def make_config(tmp_path: Path) -> Config:
@@ -42,6 +50,7 @@ def test_compile_video_prompt_preserves_creative_and_user_layers(monkeypatch, tm
 
     def fake_run(command, **kwargs):
         captured.append(command)
+        assert kwargs["timeout"] == PROMPT_TIMEOUT_SECONDS
         return SimpleNamespace(stdout=json.dumps(response), returncode=0)
 
     monkeypatch.setattr("forge.prompt_compiler.subprocess.run", fake_run)
@@ -58,12 +67,16 @@ def test_compile_video_prompt_preserves_creative_and_user_layers(monkeypatch, tm
     assert result["resolved_video_prompt"].endswith("restless handheld camera")
     assert result["duration_seconds"] == 10
     assert result["compiler"]["template_version"] == PROMPT_TEMPLATE_VERSION
+    assert result["compiler"]["reasoning"] == "off"
+    assert result["compiler"]["max_output_tokens"] == MAX_OUTPUT_TOKENS
     assert sum(float(item["duration"]) for item in result["shots"]) == 10
     command = captured[0]
     prompt = command[command.index("-p") + 1]
     assert "a blue tram in rainy Melbourne" in prompt
     assert "make the camera restless and handheld" in prompt
     assert "Requested duration: 10.00 seconds" in prompt
+    assert command[command.index("-n") + 1] == str(MAX_OUTPUT_TOKENS)
+    assert command[command.index("--reasoning") + 1] == "off"
 
 
 def test_compile_video_prompt_allows_no_user_direction(monkeypatch, tmp_path):
@@ -87,3 +100,21 @@ def test_compile_video_prompt_allows_no_user_direction(monkeypatch, tmp_path):
     )
     assert result["user_video_prompt"] is None
     assert result["resolved_video_prompt"].startswith("subtle drifting mist")
+
+
+def test_compile_video_prompt_turns_timeout_into_actionable_error(monkeypatch, tmp_path):
+    config = make_config(tmp_path)
+    monkeypatch.setattr("forge.prompt_compiler.prompt_model_ready", lambda cfg: True)
+    monkeypatch.setattr("forge.prompt_compiler.prompt_model_path", lambda cfg: tmp_path / "q.gguf")
+
+    def timeout(command, **kwargs):
+        raise subprocess.TimeoutExpired(command, kwargs["timeout"])
+
+    monkeypatch.setattr("forge.prompt_compiler.subprocess.run", timeout)
+    with pytest.raises(RuntimeError, match="video planning exceeded"):
+        compile_video_prompt(
+            config,
+            creative_prompt="quiet forest",
+            user_video_prompt="slow push forward",
+            duration_seconds=30,
+        )
