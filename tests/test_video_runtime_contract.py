@@ -44,8 +44,11 @@ def test_prompt_and_video_models_are_verified_and_on_demand():
         "c3355d30191f1f066b26d93fba017ae9809dce6c627dda5f6a66eaa651204f68",
     ):
         assert sha in video
+    assert "Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/main/split_files/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors" in video
     assert "--continue-at -" in video
     assert "sha256sum" in video
+    assert "Checksum mismatch for $filename; retrying one clean download from byte zero." in video
+    assert "did not match after a clean retry" in video
 
     sudoers = read("systemd/ooc-forge-maintenance.sudoers")
     assert "systemctl --no-block start ooc-forge-prompt-model-install.service" in sudoers
