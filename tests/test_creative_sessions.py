@@ -17,6 +17,7 @@ from forge.db import (
     get_job,
     init_db,
     list_session_jobs,
+    update_job_progress,
 )
 from forge.executor import execute
 from forge.storage import ensure_layout
@@ -59,9 +60,57 @@ def test_init_db_upgrades_legacy_jobs_table_before_session_index(tmp_path):
         columns = {row[1] for row in connection.execute("PRAGMA table_info(jobs)")}
         indexes = {row[1] for row in connection.execute("PRAGMA index_list(jobs)")}
         session_columns = {row[1] for row in connection.execute("PRAGMA table_info(creative_sessions)")}
-    assert {"creative_session_id", "parent_job_id", "derivative_type"} <= columns
+    assert {
+        "creative_session_id",
+        "parent_job_id",
+        "derivative_type",
+        "progress_stage",
+        "progress_percent",
+        "progress_message",
+        "progress_current",
+        "progress_total",
+    } <= columns
     assert "ix_jobs_session_created" in indexes
     assert {"etching_plate_ref", "etching_plate_sha256"} <= session_columns
+
+
+def test_job_progress_is_persisted_for_creative_session(tmp_path):
+    config = make_config(tmp_path)
+    ensure_layout(config)
+    init_db(config)
+    session_id = create_creative_session(config, title="Video", prompt="prompt")
+    job_id = create_job(
+        config,
+        source="LOCAL",
+        job_type="VIDEO_EXPERIENCE",
+        request={"kind": "video_from_seed"},
+        creative_session_id=session_id,
+        derivative_type="video",
+    )
+
+    update_job_progress(
+        config,
+        job_id,
+        stage="GENERATING",
+        percent=46,
+        message="Generating Wan2.2 shot 2 of 6.",
+        current=2,
+        total=6,
+    )
+
+    row = get_job(config, job_id)
+    assert row is not None
+    assert row["progress_stage"] == "GENERATING"
+    assert row["progress_percent"] == 46
+    assert row["progress_message"] == "Generating Wan2.2 shot 2 of 6."
+    assert row["progress_current"] == 2
+    assert row["progress_total"] == 6
+
+    finish_job(config, job_id, {"assets": []})
+    row = get_job(config, job_id)
+    assert row is not None
+    assert row["progress_stage"] == "COMPLETED"
+    assert row["progress_percent"] == 100
 
 
 def test_candidate_batch_generates_distinct_studies(monkeypatch, tmp_path):
