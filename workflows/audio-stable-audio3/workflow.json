@@ -1,0 +1,57 @@
+{
+  "1": {
+    "inputs": {"ckpt_name": "stable_audio_3_medium_base.safetensors"},
+    "class_type": "CheckpointLoaderSimple",
+    "_meta": {"title": "Stable Audio 3 Medium Base"}
+  },
+  "2": {
+    "inputs": {
+      "clip_name": "t5gemma_b_b_ul2.safetensors",
+      "type": "stable_audio",
+      "device": "default"
+    },
+    "class_type": "CLIPLoader",
+    "_meta": {"title": "Stable Audio Text Encoder"}
+  },
+  "3": {
+    "inputs": {"text": "cinematic instrumental soundscape", "clip": ["2", 0]},
+    "class_type": "CLIPTextEncode",
+    "_meta": {"title": "Audio Prompt"}
+  },
+  "4": {
+    "inputs": {"text": "speech, narration, vocals, clipping, distortion, low quality", "clip": ["2", 0]},
+    "class_type": "CLIPTextEncode",
+    "_meta": {"title": "Negative Audio Prompt"}
+  },
+  "5": {
+    "inputs": {"seconds": 30.0, "batch_size": 1},
+    "class_type": "EmptyLatentAudio",
+    "_meta": {"title": "Audio Duration"}
+  },
+  "6": {
+    "inputs": {
+      "seed": 1,
+      "steps": 50,
+      "cfg": 7.0,
+      "sampler_name": "lcm",
+      "scheduler": "simple",
+      "denoise": 1.0,
+      "model": ["1", 0],
+      "positive": ["3", 0],
+      "negative": ["4", 0],
+      "latent_image": ["5", 0]
+    },
+    "class_type": "KSampler",
+    "_meta": {"title": "Stable Audio Sampler"}
+  },
+  "7": {
+    "inputs": {"samples": ["6", 0], "vae": ["1", 2]},
+    "class_type": "VAEDecodeAudio",
+    "_meta": {"title": "Decode Audio"}
+  },
+  "8": {
+    "inputs": {"audio": ["7", 0], "filename_prefix": "audio/OOC-FORGE"},
+    "class_type": "SaveAudio",
+    "_meta": {"title": "Save Audio Master"}
+  }
+}
