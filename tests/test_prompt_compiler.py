@@ -5,8 +5,6 @@ import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
-import pytest
-
 from forge.config import Config
 from forge.prompt_compiler import (
     MAX_OUTPUT_TOKENS,
@@ -69,6 +67,7 @@ def test_compile_video_prompt_preserves_creative_and_user_layers(monkeypatch, tm
     assert result["compiler"]["template_version"] == PROMPT_TEMPLATE_VERSION
     assert result["compiler"]["reasoning"] == "off"
     assert result["compiler"]["max_output_tokens"] == MAX_OUTPUT_TOKENS
+    assert result["compiler"]["mode"] == "local_llm"
     assert sum(float(item["duration"]) for item in result["shots"]) == 10
     command = captured[0]
     prompt = command[command.index("-p") + 1]
@@ -102,7 +101,7 @@ def test_compile_video_prompt_allows_no_user_direction(monkeypatch, tmp_path):
     assert result["resolved_video_prompt"].startswith("subtle drifting mist")
 
 
-def test_compile_video_prompt_turns_timeout_into_actionable_error(monkeypatch, tmp_path):
+def test_compile_video_prompt_timeout_continues_with_fallback(monkeypatch, tmp_path):
     config = make_config(tmp_path)
     monkeypatch.setattr("forge.prompt_compiler.prompt_model_ready", lambda cfg: True)
     monkeypatch.setattr("forge.prompt_compiler.prompt_model_path", lambda cfg: tmp_path / "q.gguf")
@@ -111,10 +110,14 @@ def test_compile_video_prompt_turns_timeout_into_actionable_error(monkeypatch, t
         raise subprocess.TimeoutExpired(command, kwargs["timeout"])
 
     monkeypatch.setattr("forge.prompt_compiler.subprocess.run", timeout)
-    with pytest.raises(RuntimeError, match="video planning exceeded"):
-        compile_video_prompt(
-            config,
-            creative_prompt="quiet forest",
-            user_video_prompt="slow push forward",
-            duration_seconds=30,
-        )
+    result = compile_video_prompt(
+        config,
+        creative_prompt="quiet forest",
+        user_video_prompt="slow push forward",
+        duration_seconds=30,
+    )
+    assert result["compiler"]["mode"] == "deterministic_fallback"
+    assert "exceeded" in result["compiler"]["fallback_reason"]
+    assert result["user_video_prompt"] == "slow push forward"
+    assert len(result["shots"]) == 6
+    assert sum(float(item["duration"]) for item in result["shots"]) == 30.0
