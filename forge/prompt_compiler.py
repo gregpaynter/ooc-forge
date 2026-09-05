@@ -270,12 +270,11 @@ Rules:
         )
 
     shots = _normalise_shots(value, duration)
-    resolved_locked = f"{resolved}\nAesthetic constraint: {SEED_AESTHETIC_RULE}".strip()
     return {
         "creative_prompt": creative_prompt.strip(),
         "derived_video_prompt": derived,
         "user_video_prompt": user_direction or None,
-        "resolved_video_prompt": resolved_locked,
+        "resolved_video_prompt": resolved,
         "camera": str(value.get("camera") or "").strip() or None,
         "motion": str(value.get("motion") or "").strip() or None,
         "pacing": str(value.get("pacing") or "").strip() or None,
