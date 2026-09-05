@@ -49,7 +49,7 @@ chmod 0644 /etc/ooc-forge/comfyui-model-paths.yaml
 
 # Seed all immutable workflow definitions. Model weights remain separate Forge
 # Data and are installed later through the authenticated model-management UI.
-for workflow in manual-image print-upscale video-wan22-ti2v; do
+for workflow in manual-image manual-image-reference print-upscale video-wan22-ti2v; do
   install -o "$FORGE_USER" -g "$FORGE_USER" -d "$FORGE_DATA/workflows/$workflow"
   install -o "$FORGE_USER" -g "$FORGE_USER" -m 0644 "$SOURCE_DIR/workflows/$workflow/manifest.json" "$FORGE_DATA/workflows/$workflow/manifest.json"
   install -o "$FORGE_USER" -g "$FORGE_USER" -m 0644 "$SOURCE_DIR/workflows/$workflow/workflow.json" "$FORGE_DATA/workflows/$workflow/workflow.json"
