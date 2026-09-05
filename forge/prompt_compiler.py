@@ -9,10 +9,10 @@ from forge.config import Config
 from forge.models import REFERENCE_PROMPT_MODEL, prompt_model_path, prompt_model_ready
 
 
-PROMPT_TEMPLATE_VERSION = "video-director.v2"
+PROMPT_TEMPLATE_VERSION = "video-director.v3"
 MAX_SHOT_SECONDS = 5.0
-MAX_OUTPUT_TOKENS = 640
-PROMPT_TIMEOUT_SECONDS = 240
+MAX_OUTPUT_TOKENS = 384
+PROMPT_TIMEOUT_SECONDS = 120
 
 
 def _extract_json(text: str) -> dict[str, Any]:
@@ -45,9 +45,9 @@ def _normalise_shots(value: dict[str, Any], duration: float) -> list[dict[str, A
                 shot_duration = float(item.get("duration") or MAX_SHOT_SECONDS)
             except (TypeError, ValueError):
                 shot_duration = MAX_SHOT_SECONDS
-            shot_duration = max(1.0, min(MAX_SHOT_SECONDS, shot_duration, duration - cursor))
             if duration - cursor <= 0:
                 break
+            shot_duration = max(1.0, min(MAX_SHOT_SECONDS, shot_duration, duration - cursor))
             shots.append(
                 {
                     "start": round(cursor, 3),
@@ -60,7 +60,11 @@ def _normalise_shots(value: dict[str, Any], duration: float) -> list[dict[str, A
                 break
 
     cursor = sum(float(item["duration"]) for item in shots)
-    fallback = str(value.get("resolved_video_prompt") or value.get("derived_video_prompt") or "subtle cinematic motion").strip()
+    fallback = str(
+        value.get("resolved_video_prompt")
+        or value.get("derived_video_prompt")
+        or "subtle cinematic motion"
+    ).strip()
     while cursor < duration - 1e-6:
         remaining = duration - cursor
         shot_duration = min(MAX_SHOT_SECONDS, remaining)
@@ -73,6 +77,80 @@ def _normalise_shots(value: dict[str, Any], duration: float) -> list[dict[str, A
         )
         cursor += shot_duration
     return shots
+
+
+def _compiler_metadata(*, mode: str, fallback_reason: str | None = None) -> dict[str, Any]:
+    value: dict[str, Any] = {
+        "runtime": "llama.cpp",
+        "model": REFERENCE_PROMPT_MODEL["filename"],
+        "model_sha256": REFERENCE_PROMPT_MODEL["sha256"],
+        "template_version": PROMPT_TEMPLATE_VERSION,
+        "reasoning": "off",
+        "max_output_tokens": MAX_OUTPUT_TOKENS,
+        "timeout_seconds": PROMPT_TIMEOUT_SECONDS,
+        "mode": mode,
+    }
+    if fallback_reason:
+        value["fallback_reason"] = fallback_reason[:500]
+    return value
+
+
+def _fallback_plan(
+    *,
+    creative_prompt: str,
+    user_video_prompt: str,
+    duration: float,
+    reason: str,
+) -> dict[str, Any]:
+    creative = creative_prompt.strip()
+    user_direction = user_video_prompt.strip()
+    derived = (
+        user_direction
+        if user_direction
+        else "Add restrained camera, subject and environmental motion while preserving the Seed Work."
+    )
+    resolved = f"{creative}\nTemporal direction: {derived}".strip()
+    raw_shots: list[dict[str, Any]] = []
+    cursor = 0.0
+    index = 0
+    while cursor < duration - 1e-6:
+        shot_duration = min(MAX_SHOT_SECONDS, duration - cursor)
+        continuity = (
+            "Begin from the exact Seed Work"
+            if index == 0
+            else "Continue seamlessly from the final frame of the previous shot"
+        )
+        raw_shots.append(
+            {
+                "duration": shot_duration,
+                "instruction": (
+                    f"{continuity}; {derived}. Preserve subject identity, composition, visual style and atmosphere."
+                ),
+            }
+        )
+        cursor += shot_duration
+        index += 1
+    value = {
+        "resolved_video_prompt": resolved,
+        "derived_video_prompt": derived,
+        "shots": raw_shots,
+    }
+    return {
+        "creative_prompt": creative,
+        "derived_video_prompt": derived,
+        "user_video_prompt": user_direction or None,
+        "resolved_video_prompt": resolved,
+        "camera": "Restrained continuity-preserving camera movement.",
+        "motion": derived,
+        "pacing": "Continuous and measured.",
+        "continuity_rules": [
+            "Continue from the previous shot's final frame.",
+            "Preserve subject identity, composition, style and atmosphere.",
+        ],
+        "shots": _normalise_shots(value, duration),
+        "duration_seconds": duration,
+        "compiler": _compiler_metadata(mode="deterministic_fallback", fallback_reason=reason),
+    }
 
 
 def compile_video_prompt(
@@ -131,7 +209,7 @@ Rules:
         "-n",
         str(MAX_OUTPUT_TOKENS),
         "--ctx-size",
-        "4096",
+        "3072",
         "--temp",
         "0.2",
         "--reasoning",
@@ -147,21 +225,36 @@ Rules:
             timeout=PROMPT_TIMEOUT_SECONDS,
             check=True,
         )
-    except subprocess.TimeoutExpired as error:
-        raise RuntimeError(
-            f"Local Qwen video planning exceeded {PROMPT_TIMEOUT_SECONDS} seconds. "
-            "The video model was not started; retry the job after checking CPU load."
-        ) from error
+    except subprocess.TimeoutExpired:
+        return _fallback_plan(
+            creative_prompt=creative_prompt,
+            user_video_prompt=user_direction,
+            duration=duration,
+            reason=f"Local Qwen planning exceeded {PROMPT_TIMEOUT_SECONDS} seconds.",
+        )
     except subprocess.CalledProcessError as error:
         detail = (error.stderr or error.stdout or "").strip()
-        suffix = f" {detail[-500:]}" if detail else ""
-        raise RuntimeError(f"Local Qwen video planning failed.{suffix}") from error
+        return _fallback_plan(
+            creative_prompt=creative_prompt,
+            user_video_prompt=user_direction,
+            duration=duration,
+            reason=(f"Local Qwen planning failed: {detail[-400:]}" if detail else "Local Qwen planning failed."),
+        )
 
-    value = _extract_json(result.stdout)
-    derived = str(value.get("derived_video_prompt") or "").strip()
-    resolved = str(value.get("resolved_video_prompt") or "").strip()
-    if not derived or not resolved:
-        raise RuntimeError("Prompt compiler omitted required video prompt fields.")
+    try:
+        value = _extract_json(result.stdout)
+        derived = str(value.get("derived_video_prompt") or "").strip()
+        resolved = str(value.get("resolved_video_prompt") or "").strip()
+        if not derived or not resolved:
+            raise RuntimeError("Prompt compiler omitted required video prompt fields.")
+    except RuntimeError as error:
+        return _fallback_plan(
+            creative_prompt=creative_prompt,
+            user_video_prompt=user_direction,
+            duration=duration,
+            reason=str(error),
+        )
+
     shots = _normalise_shots(value, duration)
     return {
         "creative_prompt": creative_prompt.strip(),
@@ -171,15 +264,12 @@ Rules:
         "camera": str(value.get("camera") or "").strip() or None,
         "motion": str(value.get("motion") or "").strip() or None,
         "pacing": str(value.get("pacing") or "").strip() or None,
-        "continuity_rules": [str(item).strip() for item in value.get("continuity_rules") or [] if str(item).strip()],
+        "continuity_rules": [
+            str(item).strip()
+            for item in value.get("continuity_rules") or []
+            if str(item).strip()
+        ],
         "shots": shots,
         "duration_seconds": duration,
-        "compiler": {
-            "runtime": "llama.cpp",
-            "model": REFERENCE_PROMPT_MODEL["filename"],
-            "model_sha256": REFERENCE_PROMPT_MODEL["sha256"],
-            "template_version": PROMPT_TEMPLATE_VERSION,
-            "reasoning": "off",
-            "max_output_tokens": MAX_OUTPUT_TOKENS,
-        },
+        "compiler": _compiler_metadata(mode="local_llm"),
     }
