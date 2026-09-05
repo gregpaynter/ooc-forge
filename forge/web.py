@@ -268,7 +268,7 @@ def create_app() -> Flask:
                 source_ref=request.form.get("source_ref", ""),
                 thumbnail_max_edge=max(128, min(2048, setting_int(config, "thumbnail_max_edge", 768))),
             )
-            flash("Seed Work selected and website thumbnail created.")
+            flash("Seed Work selected; website thumbnail and inverse etching plate created.")
         except (RuntimeError, subprocess.SubprocessError) as error:
             flash(str(error))
         return redirect(url_for("creative_session", session_id=session_id))
@@ -428,89 +428,75 @@ def create_app() -> Flask:
                 health_value = report(config)
                 try:
                     response = requests.post(
-                        f"{origin}/api/forge/pairing/start",
+                        f"{origin}/api/forge/commission",
                         json={
                             "forge_id": identity["forge_id"],
-                            "name": identity["name"],
-                            "runtime_version": __version__,
-                            "hardware": {
-                                "gpu": health_value["gpu"],
-                                "storage": health_value["storage"],
-                            },
+                            "name": identity.get("name", "OOC Forge"),
+                            "version": __version__,
                             "capabilities": capabilities(config),
-                            "health": health_value,
+                            "status": health_value["status"],
                         },
-                        timeout=30,
+                        timeout=15,
                     )
                     response.raise_for_status()
                     value = response.json()
                     update_secrets(
                         config,
                         ooc_origin=origin,
-                        pairing_id=value["pairing_id"],
-                        pairing_code=value["pairing_code"],
-                        pairing_poll_secret=value["poll_secret"],
-                        pairing_status="PENDING",
+                        forge_token=value["forge_token"],
+                        commissioned=True,
                     )
-                    return redirect(url_for("ooc_settings"))
+                    flash("Forge commissioned successfully.")
                 except Exception as error:
-                    flash(f"Could not start pairing: {error}")
+                    flash(f"Commissioning failed: {error}")
         return render_template(
-            "ooc.html",
+            "ooc_settings.html",
             identity=ensure_identity(config),
             ooc=ensure_secrets(config),
         )
 
     @app.get("/system")
+    @app.post("/system")
     @login_required
     def system():
+        if request.method == "POST":
+            action = request.form.get("action")
+            if action == "settings":
+                set_setting(
+                    config,
+                    "default_candidate_count",
+                    str(max(1, min(12, int(request.form.get("default_candidate_count") or 3)))),
+                )
+                set_setting(
+                    config,
+                    "default_video_duration_seconds",
+                    str(max(1, min(600, int(request.form.get("default_video_duration_seconds") or 30)))),
+                )
+                set_setting(
+                    config,
+                    "thumbnail_max_edge",
+                    str(max(128, min(2048, int(request.form.get("thumbnail_max_edge") or 768)))),
+                )
+                flash("Creative defaults saved.")
+            elif action == "git-update":
+                digest = setting(config, "admin_password_hash")
+                if not digest or not check_password_hash(digest, request.form.get("password", "")):
+                    flash("Admin password is required for a Git update.")
+                else:
+                    try:
+                        request_git_update(request.form.get("ref", "").strip() or "iso-usb-boot")
+                        flash("Git update started. The Forge will return after the validated update is installed.")
+                    except (RuntimeError, subprocess.SubprocessError) as error:
+                        flash(f"Could not start Git update: {error}")
         return render_template(
             "system.html",
-            identity=ensure_identity(config),
             health=report(config),
             capabilities=capabilities(config),
-            version=__version__,
-            source_ref=installed_source_ref(),
-            git_update=git_update_status(config),
-            creative_defaults={
-                "candidate_count": setting_int(config, "default_candidate_count", 3),
-                "video_duration": setting_int(config, "default_video_duration_seconds", 30),
-                "thumbnail_max_edge": setting_int(config, "thumbnail_max_edge", 768),
-            },
+            git_status=git_update_status(config),
+            installed_source=installed_source_ref(),
+            default_candidate_count=setting_int(config, "default_candidate_count", 3),
+            default_video_duration=setting_int(config, "default_video_duration_seconds", 30),
+            thumbnail_max_edge=setting_int(config, "thumbnail_max_edge", 768),
         )
-
-    @app.post("/system/creative-settings")
-    @login_required
-    def creative_settings():
-        try:
-            candidate_count = max(1, min(12, int(request.form.get("candidate_count") or 3)))
-            duration = max(1, min(600, int(request.form.get("video_duration") or 30)))
-            thumbnail = max(128, min(2048, int(request.form.get("thumbnail_max_edge") or 768)))
-        except ValueError:
-            flash("Creative settings must be whole numbers.")
-            return redirect(url_for("system"))
-        set_setting(config, "default_candidate_count", str(candidate_count))
-        set_setting(config, "default_video_duration_seconds", str(duration))
-        set_setting(config, "thumbnail_max_edge", str(thumbnail))
-        flash("Creative defaults updated.")
-        return redirect(url_for("system"))
-
-    @app.post("/system/maintenance/git-update")
-    @login_required
-    def maintenance_git_update():
-        if request.form.get("confirm") != "yes":
-            flash("Confirm that this is a Developer/Maintenance update.")
-            return redirect(url_for("system"))
-        digest = setting(config, "admin_password_hash")
-        if not digest or not check_password_hash(digest, request.form.get("password", "")):
-            flash("Admin password is required to start a Git maintenance update.")
-            return redirect(url_for("system"))
-        try:
-            git_ref = request.form.get("git_ref", "main")
-            request_git_update(config, git_ref)
-            flash(f"Developer/Maintenance Git update requested for {git_ref.strip()}.")
-        except (ValueError, RuntimeError) as error:
-            flash(str(error))
-        return redirect(url_for("system"))
 
     return app
