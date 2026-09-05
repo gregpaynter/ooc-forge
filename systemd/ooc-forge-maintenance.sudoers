@@ -3,3 +3,4 @@ forge ALL=(root) NOPASSWD: /usr/bin/systemctl --no-block start ooc-forge-model-i
 forge ALL=(root) NOPASSWD: /usr/bin/systemctl --no-block start ooc-forge-upscale-model-install.service
 forge ALL=(root) NOPASSWD: /usr/bin/systemctl --no-block start ooc-forge-prompt-model-install.service
 forge ALL=(root) NOPASSWD: /usr/bin/systemctl --no-block start ooc-forge-video-model-install.service
+forge ALL=(root) NOPASSWD: /usr/bin/systemctl --no-block start ooc-forge-audio-model-install.service
