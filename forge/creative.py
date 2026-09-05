@@ -14,8 +14,10 @@ from forge.db import (
     get_creative_session,
     get_job,
     list_session_jobs,
+    set_session_etching_plate,
     set_session_seed,
 )
+from forge.reference_image import remove_staged_reference_image
 
 
 def _sha256(path: Path) -> str:
@@ -34,12 +36,72 @@ def _safe_library_path(config: Config, relative_path: str) -> Path:
     return candidate
 
 
+def _safe_remove_tree(config: Config, path: Path) -> None:
+    root = config.library_root.resolve()
+    candidate = path.resolve()
+    if root in candidate.parents and candidate.exists():
+        shutil.rmtree(candidate)
+
+
 def _job_assets(row: Any) -> list[dict[str, Any]]:
     if not row or not row["result_json"]:
         return []
     value = json.loads(str(row["result_json"]))
     assets = value.get("assets") if isinstance(value, dict) else None
     return [dict(item) for item in assets or [] if isinstance(item, dict)]
+
+
+def _render_inverse_print_plate(seed_work: Path, destination_root: Path) -> Path:
+    destination_root.mkdir(parents=True, exist_ok=True)
+    plate = destination_root / "etching-plate-inverse.png"
+    temp_plate = destination_root / ".etching-plate-inverse.tmp.png"
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            str(seed_work),
+            "-vf",
+            "hflip,negate",
+            "-frames:v",
+            "1",
+            str(temp_plate),
+        ],
+        check=True,
+        timeout=120,
+    )
+    temp_plate.replace(plate)
+    return plate
+
+
+def create_inverse_print_plate(config: Config, *, session_id: str) -> dict[str, str]:
+    session = get_creative_session(config, session_id)
+    if not session:
+        raise RuntimeError("Creative session not found.")
+    seed_ref = str(session["seed_work_ref"] or "").strip()
+    if not seed_ref:
+        raise RuntimeError("Select a Seed Work before creating the inverse print plate.")
+    seed_work = _safe_library_path(config, seed_ref)
+    if not seed_work.is_file():
+        raise RuntimeError("Seed Work file is missing from Forge Data.")
+
+    destination_root = config.library_root / "works" / session_id
+    plate = _render_inverse_print_plate(seed_work, destination_root)
+    plate_ref = plate.relative_to(config.data_root).as_posix()
+    plate_sha256 = _sha256(plate)
+    set_session_etching_plate(
+        config,
+        session_id,
+        etching_plate_ref=plate_ref,
+        etching_plate_sha256=plate_sha256,
+    )
+    return {
+        "etching_plate_ref": plate_ref,
+        "etching_plate_sha256": plate_sha256,
+    }
 
 
 def promote_seed_work(
@@ -110,10 +172,17 @@ def promote_seed_work(
     )
     temp_thumbnail.replace(thumbnail)
 
+    # Plate-preparation artwork is deterministic: horizontally reverse the image
+    # so the transferred print reads in the Seed Work orientation, and invert its
+    # tonal polarity for the physical plate-preparation image. Never mutate the Seed.
+    etching_plate = _render_inverse_print_plate(seed_work, destination_root)
+
     seed_ref = seed_work.relative_to(config.data_root).as_posix()
     thumbnail_ref = thumbnail.relative_to(config.data_root).as_posix()
+    etching_plate_ref = etching_plate.relative_to(config.data_root).as_posix()
     seed_sha256 = _sha256(seed_work)
     thumbnail_sha256 = _sha256(thumbnail)
+    etching_plate_sha256 = _sha256(etching_plate)
     set_session_seed(
         config,
         session_id,
@@ -123,12 +192,16 @@ def promote_seed_work(
         seed_work_sha256=seed_sha256,
         thumbnail_ref=thumbnail_ref,
         thumbnail_sha256=thumbnail_sha256,
+        etching_plate_ref=etching_plate_ref,
+        etching_plate_sha256=etching_plate_sha256,
     )
     return {
         "seed_work_ref": seed_ref,
         "seed_work_sha256": seed_sha256,
         "thumbnail_ref": thumbnail_ref,
         "thumbnail_sha256": thumbnail_sha256,
+        "etching_plate_ref": etching_plate_ref,
+        "etching_plate_sha256": etching_plate_sha256,
     }
 
 
@@ -147,11 +220,11 @@ def delete_job_and_files(config: Config, job_id: str) -> None:
         except RuntimeError:
             continue
         path.unlink(missing_ok=True)
-        parent = path.parent
-        try:
-            parent.rmdir()
-        except OSError:
-            pass
+    _safe_remove_tree(config, config.library_root / "experiences" / job_id)
+    _safe_remove_tree(config, config.library_root / "audio" / job_id)
+    study_root = config.library_root / "studies" / job_id
+    if study_root.exists():
+        _safe_remove_tree(config, study_root)
     delete_job_record(config, job_id)
 
 
@@ -172,14 +245,12 @@ def delete_session_and_files(config: Config, session_id: str) -> None:
                 except RuntimeError:
                     pass
 
-    work_root = (config.library_root / "works" / session_id).resolve()
-    library = config.library_root.resolve()
-    if library in work_root.parents and work_root.exists():
-        shutil.rmtree(work_root)
-
+    _safe_remove_tree(config, config.library_root / "works" / session_id)
+    remove_staged_reference_image(config, session_id)
     for row in jobs:
-        study_root = (config.library_root / "studies" / str(row["id"])).resolve()
-        if library in study_root.parents and study_root.exists():
-            shutil.rmtree(study_root)
+        job_id = str(row["id"])
+        _safe_remove_tree(config, config.library_root / "studies" / job_id)
+        _safe_remove_tree(config, config.library_root / "experiences" / job_id)
+        _safe_remove_tree(config, config.library_root / "audio" / job_id)
 
     delete_creative_session_record(config, session_id)

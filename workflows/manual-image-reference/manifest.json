@@ -1,0 +1,16 @@
+{
+  "id": "manual-image-reference",
+  "version": "1",
+  "output_kind": "image",
+  "bindings": [
+    {"source": "prompt", "node": "6", "input": "text"},
+    {"source": "negative_prompt", "node": "7", "input": "text", "default": ""},
+    {"source": "checkpoint", "node": "4", "input": "ckpt_name"},
+    {"source": "input_image", "node": "5", "input": "image"},
+    {"source": "width", "node": "10", "input": "width", "default": 1024},
+    {"source": "height", "node": "10", "input": "height", "default": 1024},
+    {"source": "steps", "node": "3", "input": "steps", "default": 24},
+    {"source": "reference_denoise", "node": "3", "input": "denoise", "default": 0.65},
+    {"source": "seed", "node": "3", "input": "seed", "default": 1}
+  ]
+}

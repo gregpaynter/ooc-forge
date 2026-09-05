@@ -18,6 +18,7 @@ class ComfyError(RuntimeError):
 
 CHECKPOINT_EXTENSIONS = {".safetensors", ".ckpt", ".pt", ".pth"}
 UPSCALE_MODEL_EXTENSIONS = {".safetensors", ".pt", ".pth"}
+MODEL_EXTENSIONS = {".safetensors", ".ckpt", ".pt", ".pth", ".bin"}
 
 
 def _installed_models(root: Path, extensions: set[str]) -> list[str]:
@@ -30,8 +31,24 @@ def _installed_models(root: Path, extensions: set[str]) -> list[str]:
     )
 
 
+def installed_model_files(config: Config, category: str) -> list[str]:
+    return _installed_models(config.data_root / "models" / category, MODEL_EXTENSIONS)
+
+
 def installed_checkpoints(config: Config) -> list[str]:
-    return _installed_models(config.data_root / "models" / "checkpoints", CHECKPOINT_EXTENSIONS)
+    """Return checkpoints usable for image creation, excluding managed non-image checkpoints."""
+    from forge.models import REFERENCE_AUDIO_MODEL
+
+    excluded = {
+        str(item["filename"])
+        for item in REFERENCE_AUDIO_MODEL["files"]
+        if str(item["directory"]) == "checkpoints"
+    }
+    return [
+        name
+        for name in _installed_models(config.data_root / "models" / "checkpoints", CHECKPOINT_EXTENSIONS)
+        if name not in excluded
+    ]
 
 
 def installed_upscale_models(config: Config) -> list[str]:
@@ -51,30 +68,39 @@ def _apply_checkpoint(config: Config, workflow: dict[str, Any], request: dict[st
     if not nodes:
         return
 
-    installed = installed_checkpoints(config)
+    image_checkpoints = installed_checkpoints(config)
+    all_checkpoints = set(installed_model_files(config, "checkpoints"))
     requested = str(request.get("checkpoint") or "").strip() or None
     selected = requested or config.default_checkpoint
+    explicit_non_image = str(request.get("kind") or "") == "audio_from_seed"
+
+    # Explicit checkpoint requests may be non-image model checkpoints, such as
+    # Stable Audio 3. Automatic selection is deliberately image-only.
+    if selected is not None and selected not in all_checkpoints:
+        available = ", ".join(sorted(all_checkpoints)) if all_checkpoints else "none"
+        if explicit_non_image:
+            raise ComfyError(
+                f"Checkpoint is not installed: {selected}. Installed checkpoints: {available}. "
+                "Models belong under /forge-data/models/checkpoints/."
+            )
+        raise ComfyError(
+            f"Image checkpoint is not installed: {selected}. "
+            f"Installed checkpoints: {available}. Models belong under "
+            "/forge-data/models/checkpoints/."
+        )
 
     if selected is None:
         configured = str(nodes[0].get("inputs", {}).get("ckpt_name") or "").strip()
-        if configured in installed:
+        if configured in all_checkpoints and configured in image_checkpoints:
             selected = configured
-        elif len(installed) == 1:
-            selected = installed[0]
+        elif len(image_checkpoints) == 1:
+            selected = image_checkpoints[0]
 
     if selected is None:
         raise ComfyError(
             "No image checkpoint is installed/selected. Install a checkpoint under "
             "/forge-data/models/checkpoints/ and select it in Manual Create, or set "
             "FORGE_DEFAULT_CHECKPOINT."
-        )
-
-    if selected not in installed:
-        available = ", ".join(installed) if installed else "none"
-        raise ComfyError(
-            f"Image checkpoint is not installed: {selected}. "
-            f"Installed checkpoints: {available}. Models belong under "
-            "/forge-data/models/checkpoints/."
         )
 
     for node in nodes:
@@ -112,6 +138,25 @@ def _apply_upscale_model(config: Config, workflow: dict[str, Any], request: dict
 
     for node in nodes:
         node.setdefault("inputs", {})["model_name"] = selected
+
+
+def _validate_loader_models(config: Config, workflow: dict[str, Any]) -> None:
+    requirements = (
+        ("UNETLoader", "unet_name", "diffusion_models"),
+        ("CLIPLoader", "clip_name", "text_encoders"),
+        ("VAELoader", "vae_name", "vae"),
+    )
+    missing: list[str] = []
+    for class_type, input_name, category in requirements:
+        installed = set(installed_model_files(config, category))
+        for node in _nodes(workflow, class_type):
+            filename = str(node.get("inputs", {}).get(input_name) or "").strip()
+            if filename and filename not in installed:
+                missing.append(f"{category}/{filename}")
+    if missing:
+        raise ComfyError(
+            "Required workflow model files are not installed: " + ", ".join(sorted(set(missing)))
+        )
 
 
 class ComfyClient:
@@ -203,6 +248,7 @@ def load_workflow(config: Config, workflow_id: str, request: dict[str, Any]) -> 
         node["inputs"][str(binding["input"])] = value
     _apply_checkpoint(config, workflow, request)
     _apply_upscale_model(config, workflow, request)
+    _validate_loader_models(config, workflow)
     return workflow, manifest
 
 
@@ -211,7 +257,7 @@ def output_references(history: dict[str, Any]) -> list[dict[str, Any]]:
     for output in (history.get("outputs") or {}).values():
         if not isinstance(output, dict):
             continue
-        for key in ("images", "gifs", "audio"):
+        for key in ("images", "videos", "gifs", "audio"):
             values = output.get(key)
             if not isinstance(values, list):
                 continue

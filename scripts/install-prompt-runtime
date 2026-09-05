@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ ${EUID:-$(id -u)} -ne 0 ]]; then
+  echo "Run as root." >&2
+  exit 1
+fi
+
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=/dev/null
+source "$SCRIPT_DIR/prompt-runtime.env"
+
+RUNTIME_DIR=${LLAMA_CPP_DIR:-/opt/llama.cpp}
+BUILD_DIR="$RUNTIME_DIR/build"
+
+for command in git cmake; do
+  command -v "$command" >/dev/null || {
+    echo "Required command not found: $command" >&2
+    exit 1
+  }
+done
+
+rm -rf "$RUNTIME_DIR"
+install -d -m 0755 "$RUNTIME_DIR"
+git -C "$RUNTIME_DIR" init -q
+git -C "$RUNTIME_DIR" remote add origin https://github.com/ggml-org/llama.cpp.git
+git -C "$RUNTIME_DIR" fetch -q --depth 1 origin "$LLAMA_CPP_COMMIT"
+git -C "$RUNTIME_DIR" checkout -q --detach FETCH_HEAD
+
+actual_commit=$(git -C "$RUNTIME_DIR" rev-parse HEAD)
+if [[ "$actual_commit" != "$LLAMA_CPP_COMMIT" ]]; then
+  echo "llama.cpp commit mismatch: expected $LLAMA_CPP_COMMIT, got $actual_commit" >&2
+  exit 1
+fi
+
+# Prompt compilation is intentionally CPU-only. The small Qwen model should not
+# consume RTX 3090 VRAM needed by SDXL/Wan creative execution.
+#
+# At the pinned upstream commit, tools/cli is added under LLAMA_BUILD_SERVER.
+# Enabling that CMake option is therefore required to expose the llama-cli target;
+# we still build/install only llama-cli and keep CUDA/CURL disabled.
+cmake -S "$RUNTIME_DIR" -B "$BUILD_DIR" \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DGGML_CUDA=OFF \
+  -DLLAMA_CURL=OFF \
+  -DLLAMA_BUILD_SERVER=ON \
+  -DBUILD_SHARED_LIBS=OFF
+cmake --build "$BUILD_DIR" --config Release -j"$(nproc)" --target llama-cli
+
+test -x "$BUILD_DIR/bin/llama-cli"
+install -m 0755 "$BUILD_DIR/bin/llama-cli" /usr/local/bin/ooc-llama-cli
+
+install -d -m 0755 /etc/ooc-forge
+cat > /etc/ooc-forge/prompt-runtime.env <<ENV
+LLAMA_CPP_VERSION=$LLAMA_CPP_VERSION
+LLAMA_CPP_COMMIT=$LLAMA_CPP_COMMIT
+ENV
+chmod 0644 /etc/ooc-forge/prompt-runtime.env
+
+chown -R root:root "$RUNTIME_DIR"
+chmod -R a+rX "$RUNTIME_DIR"
+
+echo "Pinned OOC Forge prompt compiler runtime installed: llama.cpp $LLAMA_CPP_VERSION ($LLAMA_CPP_COMMIT)."

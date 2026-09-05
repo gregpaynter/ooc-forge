@@ -1,0 +1,17 @@
+{
+  "id": "video-wan22-ti2v",
+  "version": "2",
+  "output_kind": "video",
+  "fps": 24,
+  "bindings": [
+    {"source": "input_image", "node": "56", "input": "image"},
+    {"source": "prompt", "node": "6", "input": "text"},
+    {"source": "negative_prompt", "node": "7", "input": "text"},
+    {"source": "width", "node": "55", "input": "width", "default": 1280},
+    {"source": "height", "node": "55", "input": "height", "default": 704},
+    {"source": "frames", "node": "55", "input": "length", "default": 121},
+    {"source": "seed", "node": "3", "input": "seed"},
+    {"source": "steps", "node": "3", "input": "steps", "default": 20},
+    {"source": "fps", "node": "57", "input": "fps", "default": 24}
+  ]
+}

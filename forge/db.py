@@ -30,6 +30,8 @@ CREATE TABLE IF NOT EXISTS creative_sessions (
     seed_work_sha256 TEXT,
     thumbnail_ref TEXT,
     thumbnail_sha256 TEXT,
+    etching_plate_ref TEXT,
+    etching_plate_sha256 TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -47,6 +49,11 @@ CREATE TABLE IF NOT EXISTS jobs (
     creative_session_id TEXT,
     parent_job_id TEXT,
     derivative_type TEXT,
+    progress_stage TEXT,
+    progress_percent INTEGER,
+    progress_message TEXT,
+    progress_current INTEGER,
+    progress_total INTEGER,
     created_at TEXT NOT NULL,
     started_at TEXT,
     completed_at TEXT
@@ -71,11 +78,18 @@ JOB_COLUMNS = {
     "creative_session_id": "TEXT",
     "parent_job_id": "TEXT",
     "derivative_type": "TEXT",
+    "progress_stage": "TEXT",
+    "progress_percent": "INTEGER",
+    "progress_message": "TEXT",
+    "progress_current": "INTEGER",
+    "progress_total": "INTEGER",
 }
 
 SESSION_COLUMNS = {
     "seed_work_sha256": "TEXT",
     "thumbnail_sha256": "TEXT",
+    "etching_plate_ref": "TEXT",
+    "etching_plate_sha256": "TEXT",
 }
 
 
@@ -200,6 +214,8 @@ def set_session_seed(
     seed_work_sha256: str,
     thumbnail_ref: str,
     thumbnail_sha256: str,
+    etching_plate_ref: str,
+    etching_plate_sha256: str,
 ) -> None:
     with transaction(config) as connection:
         connection.execute(
@@ -207,7 +223,7 @@ def set_session_seed(
             UPDATE creative_sessions
             SET status='SEED_READY', seed_source_job_id=?, seed_source_ref=?,
                 seed_work_ref=?, seed_work_sha256=?, thumbnail_ref=?, thumbnail_sha256=?,
-                updated_at=?
+                etching_plate_ref=?, etching_plate_sha256=?, updated_at=?
             WHERE id=?
             """,
             (
@@ -217,9 +233,29 @@ def set_session_seed(
                 seed_work_sha256,
                 thumbnail_ref,
                 thumbnail_sha256,
+                etching_plate_ref,
+                etching_plate_sha256,
                 utc_now(),
                 session_id,
             ),
+        )
+
+
+def set_session_etching_plate(
+    config: Config,
+    session_id: str,
+    *,
+    etching_plate_ref: str,
+    etching_plate_sha256: str,
+) -> None:
+    with transaction(config) as connection:
+        connection.execute(
+            """
+            UPDATE creative_sessions
+            SET etching_plate_ref=?, etching_plate_sha256=?, updated_at=?
+            WHERE id=?
+            """,
+            (etching_plate_ref, etching_plate_sha256, utc_now(), session_id),
         )
 
 
@@ -295,6 +331,37 @@ def get_job(config: Config, job_id: str) -> sqlite3.Row | None:
         return connection.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
 
 
+def update_job_progress(
+    config: Config,
+    job_id: str,
+    *,
+    stage: str,
+    percent: int,
+    message: str,
+    current: int | None = None,
+    total: int | None = None,
+) -> None:
+    bounded = max(0, min(100, int(percent)))
+    with transaction(config) as connection:
+        row = connection.execute(
+            "SELECT creative_session_id FROM jobs WHERE id=?", (job_id,)
+        ).fetchone()
+        connection.execute(
+            """
+            UPDATE jobs
+            SET progress_stage=?, progress_percent=?, progress_message=?,
+                progress_current=?, progress_total=?
+            WHERE id=?
+            """,
+            (stage, bounded, message, current, total, job_id),
+        )
+        if row and row["creative_session_id"]:
+            connection.execute(
+                "UPDATE creative_sessions SET updated_at=? WHERE id=?",
+                (utc_now(), row["creative_session_id"]),
+            )
+
+
 def claim_local_job(config: Config) -> sqlite3.Row | None:
     with transaction(config) as connection:
         row = connection.execute(
@@ -316,7 +383,10 @@ def finish_job(config: Config, job_id: str, result: dict[str, Any]) -> None:
         ).fetchone()
         connection.execute(
             """
-            UPDATE jobs SET status='COMPLETED', result_json=?, completed_at=?
+            UPDATE jobs
+            SET status='COMPLETED', result_json=?, completed_at=?,
+                progress_stage='COMPLETED', progress_percent=100,
+                progress_message='Completed.'
             WHERE id=?
             """,
             (json.dumps(result, sort_keys=True), utc_now(), job_id),
@@ -334,8 +404,13 @@ def fail_job(config: Config, job_id: str, error: str) -> None:
             "SELECT creative_session_id FROM jobs WHERE id=?", (job_id,)
         ).fetchone()
         connection.execute(
-            "UPDATE jobs SET status='FAILED', error=?, completed_at=? WHERE id=?",
-            (error[:4000], utc_now(), job_id),
+            """
+            UPDATE jobs
+            SET status='FAILED', error=?, completed_at=?,
+                progress_stage='FAILED', progress_message=?
+            WHERE id=?
+            """,
+            (error, utc_now(), error, job_id),
         )
         if row and row["creative_session_id"]:
             connection.execute(
@@ -346,26 +421,12 @@ def fail_job(config: Config, job_id: str, error: str) -> None:
 
 def delete_job_record(config: Config, job_id: str) -> None:
     with transaction(config) as connection:
-        row = connection.execute("SELECT status FROM jobs WHERE id=?", (job_id,)).fetchone()
-        if not row:
-            return
-        if str(row["status"]) == "RUNNING":
-            raise RuntimeError("Running jobs must finish or be cancelled before deletion.")
         connection.execute("DELETE FROM assets WHERE job_id=?", (job_id,))
         connection.execute("DELETE FROM jobs WHERE id=?", (job_id,))
 
 
 def delete_creative_session_record(config: Config, session_id: str) -> None:
     with transaction(config) as connection:
-        running = connection.execute(
-            "SELECT COUNT(*) AS count FROM jobs WHERE creative_session_id=? AND status='RUNNING'",
-            (session_id,),
-        ).fetchone()
-        if running and int(running["count"]) > 0:
-            raise RuntimeError("A creative session with running jobs cannot be deleted.")
-        connection.execute(
-            "DELETE FROM assets WHERE job_id IN (SELECT id FROM jobs WHERE creative_session_id=?)",
-            (session_id,),
-        )
+        connection.execute("DELETE FROM assets WHERE job_id IN (SELECT id FROM jobs WHERE creative_session_id=?)", (session_id,))
         connection.execute("DELETE FROM jobs WHERE creative_session_id=?", (session_id,))
         connection.execute("DELETE FROM creative_sessions WHERE id=?", (session_id,))

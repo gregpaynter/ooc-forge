@@ -10,6 +10,9 @@ from forge.config import Config
 from forge.maintenance import git_update_status, request_git_update, validate_git_ref
 
 
+ROOT = Path(__file__).resolve().parents[1]
+
+
 def make_config(tmp_path: Path) -> Config:
     return Config(
         data_root=tmp_path,
@@ -67,3 +70,11 @@ def test_git_update_status_defaults_to_idle(tmp_path: Path):
     status = git_update_status(make_config(tmp_path))
     assert status["state"] == "IDLE"
     assert status["commit"] is None
+
+
+def test_git_updater_seeds_all_immutable_workflows():
+    updater = (ROOT / "scripts/ooc-forge-git-update").read_text(encoding="utf-8")
+    for workflow in ("manual-image", "manual-image-reference", "print-upscale", "video-wan22-ti2v"):
+        assert workflow in updater
+    assert '"$FORGE_DATA_ROOT/workflows/$workflow/manifest.json"' in updater
+    assert '"$FORGE_DATA_ROOT/workflows/$workflow/workflow.json"' in updater

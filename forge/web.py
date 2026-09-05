@@ -12,7 +12,12 @@ from werkzeug.security import check_password_hash, generate_password_hash
 from forge import __version__
 from forge.comfy import installed_checkpoints, installed_upscale_models
 from forge.config import Config
-from forge.creative import delete_job_and_files, delete_session_and_files, promote_seed_work
+from forge.creative import (
+    create_inverse_print_plate,
+    delete_job_and_files,
+    delete_session_and_files,
+    promote_seed_work,
+)
 from forge.db import (
     create_creative_session,
     create_job,
@@ -38,6 +43,7 @@ from forge.models import (
     upscale_model_install_running,
     upscale_model_install_status,
 )
+from forge.reference_image import prepare_reference_image, store_reference_image
 from forge.storage import (
     ensure_identity,
     ensure_layout,
@@ -65,6 +71,7 @@ def create_app() -> Flask:
     app = Flask(__name__)
     app.secret_key = str(secrets_value["session_secret"])
     app.config["FORGE_CONFIG"] = config
+    app.config["MAX_CONTENT_LENGTH"] = 25 * 1024 * 1024
 
     def login_required(view):
         @wraps(view)
@@ -91,7 +98,7 @@ def create_app() -> Flask:
                 flash("Passwords do not match.")
             else:
                 set_setting(config, "admin_password_hash", generate_password_hash(password))
-                name = request.form.get("forge_name", "").strip() or "OOC Forge"
+                name = request.form.get("forge_name", "").strip() or "FORGE"
                 update_identity(config, name=name)
                 session["admin"] = True
                 return redirect(url_for("dashboard"))
@@ -137,17 +144,43 @@ def create_app() -> Flask:
             if request.method == "POST"
             else (config.default_checkpoint or (checkpoints[0] if len(checkpoints) == 1 else ""))
         )
+        creation_mode = (
+            request.form.get("creation_mode", "prompt").strip().lower()
+            if request.method == "POST"
+            else "prompt"
+        )
+        if creation_mode not in {"prompt", "reference"}:
+            creation_mode = "prompt"
         candidate_count = max(1, min(12, setting_int(config, "default_candidate_count", 3)))
         if request.method == "POST":
             title = request.form.get("title", "").strip() or "Untitled"
             prompt = request.form.get("prompt", "").strip()
             negative_prompt = request.form.get("negative_prompt", "").strip()
+            prepared_reference = None
+            reference_error = None
+            if creation_mode == "reference":
+                camera_upload = request.files.get("camera_image")
+                upload_upload = request.files.get("reference_image")
+                selected_upload = (
+                    camera_upload
+                    if camera_upload is not None and str(camera_upload.filename or "").strip()
+                    else upload_upload
+                )
+                try:
+                    prepared_reference = prepare_reference_image(selected_upload)
+                except RuntimeError as error:
+                    reference_error = str(error)
+
             if not prompt:
                 flash("Prompt is required.")
             elif not checkpoints:
                 flash("No image checkpoint is installed. Install the reference model from Models before generating.")
             elif selected_checkpoint not in checkpoints:
                 flash("Select an installed image checkpoint.")
+            elif reference_error:
+                flash(reference_error)
+            elif creation_mode == "reference" and prepared_reference is None:
+                flash("Choose or capture a Reference Image before generating.")
             else:
                 creative_session_id = create_creative_session(
                     config,
@@ -167,7 +200,26 @@ def create_app() -> Flask:
                     "steps": int(request.form.get("steps") or 24),
                     "seed": -1,
                     "candidate_count": candidate_count,
+                    "creation_mode": creation_mode,
                 }
+                if creation_mode == "reference" and prepared_reference is not None:
+                    try:
+                        reference = store_reference_image(
+                            config,
+                            session_id=creative_session_id,
+                            prepared=prepared_reference,
+                        )
+                    except RuntimeError as error:
+                        delete_session_and_files(config, creative_session_id)
+                        flash(str(error))
+                        return redirect(url_for("create"))
+                    payload.update(
+                        {
+                            "workflow_id": "manual-image-reference",
+                            "reference_denoise": 0.65,
+                            **reference,
+                        }
+                    )
                 create_job(
                     config,
                     source="LOCAL",
@@ -182,6 +234,7 @@ def create_app() -> Flask:
             checkpoints=checkpoints,
             selected_checkpoint=selected_checkpoint,
             candidate_count=candidate_count,
+            selected_creation_mode=creation_mode,
         )
 
     @app.get("/sessions")
@@ -199,8 +252,12 @@ def create_app() -> Flask:
         candidates: list[dict[str, Any]] = []
         derivatives: list[dict[str, Any]] = []
         active = False
+        reference_image_ref = None
         for job_row in jobs:
             active = active or str(job_row["status"]) in {"QUEUED", "RUNNING"}
+            job_request = _json(job_row["request_json"])
+            if reference_image_ref is None and job_request.get("reference_image_ref"):
+                reference_image_ref = str(job_request["reference_image_ref"])
             result = _json(job_row["result_json"])
             entry = {"row": job_row, "result": result}
             if str(job_row["derivative_type"] or "") == "study_batch":
@@ -216,6 +273,7 @@ def create_app() -> Flask:
             candidates=candidates,
             derivatives=derivatives,
             active=active,
+            reference_image_ref=reference_image_ref,
             upscale_models=installed_upscale_models(config),
             reference_upscale_model=REFERENCE_UPSCALE_MODEL,
             default_video_duration=setting_int(config, "default_video_duration_seconds", 30),
@@ -268,7 +326,17 @@ def create_app() -> Flask:
                 source_ref=request.form.get("source_ref", ""),
                 thumbnail_max_edge=max(128, min(2048, setting_int(config, "thumbnail_max_edge", 768))),
             )
-            flash("Seed Work selected and website thumbnail created.")
+            flash("Seed Work selected; website thumbnail and inverse print plate created.")
+        except (RuntimeError, subprocess.SubprocessError) as error:
+            flash(str(error))
+        return redirect(url_for("creative_session", session_id=session_id))
+
+    @app.post("/sessions/<session_id>/plate")
+    @login_required
+    def creative_session_plate(session_id: str):
+        try:
+            create_inverse_print_plate(config, session_id=session_id)
+            flash("Print Plate — Inverse created from the exact Seed Work.")
         except (RuntimeError, subprocess.SubprocessError) as error:
             flash(str(error))
         return redirect(url_for("creative_session", session_id=session_id))
@@ -428,89 +496,75 @@ def create_app() -> Flask:
                 health_value = report(config)
                 try:
                     response = requests.post(
-                        f"{origin}/api/forge/pairing/start",
+                        f"{origin}/api/forge/commission",
                         json={
                             "forge_id": identity["forge_id"],
-                            "name": identity["name"],
-                            "runtime_version": __version__,
-                            "hardware": {
-                                "gpu": health_value["gpu"],
-                                "storage": health_value["storage"],
-                            },
+                            "name": identity.get("name", "FORGE"),
+                            "version": __version__,
                             "capabilities": capabilities(config),
-                            "health": health_value,
+                            "status": health_value["status"],
                         },
-                        timeout=30,
+                        timeout=15,
                     )
                     response.raise_for_status()
                     value = response.json()
                     update_secrets(
                         config,
                         ooc_origin=origin,
-                        pairing_id=value["pairing_id"],
-                        pairing_code=value["pairing_code"],
-                        pairing_poll_secret=value["poll_secret"],
-                        pairing_status="PENDING",
+                        forge_token=value["forge_token"],
+                        commissioned=True,
                     )
-                    return redirect(url_for("ooc_settings"))
+                    flash("Forge commissioned successfully.")
                 except Exception as error:
-                    flash(f"Could not start pairing: {error}")
+                    flash(f"Commissioning failed: {error}")
         return render_template(
-            "ooc.html",
+            "ooc_settings.html",
             identity=ensure_identity(config),
             ooc=ensure_secrets(config),
         )
 
     @app.get("/system")
+    @app.post("/system")
     @login_required
     def system():
+        if request.method == "POST":
+            action = request.form.get("action")
+            if action == "settings":
+                set_setting(
+                    config,
+                    "default_candidate_count",
+                    str(max(1, min(12, int(request.form.get("default_candidate_count") or 3)))),
+                )
+                set_setting(
+                    config,
+                    "default_video_duration_seconds",
+                    str(max(1, min(600, int(request.form.get("default_video_duration_seconds") or 30)))),
+                )
+                set_setting(
+                    config,
+                    "thumbnail_max_edge",
+                    str(max(128, min(2048, int(request.form.get("thumbnail_max_edge") or 768)))),
+                )
+                flash("Creative defaults saved.")
+            elif action == "git-update":
+                digest = setting(config, "admin_password_hash")
+                if not digest or not check_password_hash(digest, request.form.get("password", "")):
+                    flash("Admin password is required for a Git update.")
+                else:
+                    try:
+                        request_git_update(request.form.get("ref", "").strip() or "iso-usb-boot")
+                        flash("Git update started. The Forge will return after the validated update is installed.")
+                    except (RuntimeError, subprocess.SubprocessError) as error:
+                        flash(f"Could not start Git update: {error}")
         return render_template(
             "system.html",
-            identity=ensure_identity(config),
             health=report(config),
             capabilities=capabilities(config),
-            version=__version__,
-            source_ref=installed_source_ref(),
-            git_update=git_update_status(config),
-            creative_defaults={
-                "candidate_count": setting_int(config, "default_candidate_count", 3),
-                "video_duration": setting_int(config, "default_video_duration_seconds", 30),
-                "thumbnail_max_edge": setting_int(config, "thumbnail_max_edge", 768),
-            },
+            git_status=git_update_status(config),
+            installed_source=installed_source_ref(),
+            default_candidate_count=setting_int(config, "default_candidate_count", 3),
+            default_video_duration=setting_int(config, "default_video_duration_seconds", 30),
+            thumbnail_max_edge=setting_int(config, "thumbnail_max_edge", 768),
         )
-
-    @app.post("/system/creative-settings")
-    @login_required
-    def creative_settings():
-        try:
-            candidate_count = max(1, min(12, int(request.form.get("candidate_count") or 3)))
-            duration = max(1, min(600, int(request.form.get("video_duration") or 30)))
-            thumbnail = max(128, min(2048, int(request.form.get("thumbnail_max_edge") or 768)))
-        except ValueError:
-            flash("Creative settings must be whole numbers.")
-            return redirect(url_for("system"))
-        set_setting(config, "default_candidate_count", str(candidate_count))
-        set_setting(config, "default_video_duration_seconds", str(duration))
-        set_setting(config, "thumbnail_max_edge", str(thumbnail))
-        flash("Creative defaults updated.")
-        return redirect(url_for("system"))
-
-    @app.post("/system/maintenance/git-update")
-    @login_required
-    def maintenance_git_update():
-        if request.form.get("confirm") != "yes":
-            flash("Confirm that this is a Developer/Maintenance update.")
-            return redirect(url_for("system"))
-        digest = setting(config, "admin_password_hash")
-        if not digest or not check_password_hash(digest, request.form.get("password", "")):
-            flash("Admin password is required to start a Git maintenance update.")
-            return redirect(url_for("system"))
-        try:
-            git_ref = request.form.get("git_ref", "main")
-            request_git_update(config, git_ref)
-            flash(f"Developer/Maintenance Git update requested for {git_ref.strip()}.")
-        except (ValueError, RuntimeError) as error:
-            flash(str(error))
-        return redirect(url_for("system"))
 
     return app

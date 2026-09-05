@@ -1,0 +1,12 @@
+[Unit]
+Description=Install verified Stable Audio 3 model stack
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/ooc-forge/forge.env
+ExecStart=/usr/local/sbin/ooc-forge-audio-model-install
+User=root
+Group=root
+UMask=0027
