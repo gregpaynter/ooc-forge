@@ -72,14 +72,21 @@ def _apply_checkpoint(config: Config, workflow: dict[str, Any], request: dict[st
     all_checkpoints = set(installed_model_files(config, "checkpoints"))
     requested = str(request.get("checkpoint") or "").strip() or None
     selected = requested or config.default_checkpoint
+    explicit_non_image = str(request.get("kind") or "") == "audio_from_seed"
 
     # Explicit checkpoint requests may be non-image model checkpoints, such as
     # Stable Audio 3. Automatic selection is deliberately image-only.
     if selected is not None and selected not in all_checkpoints:
         available = ", ".join(sorted(all_checkpoints)) if all_checkpoints else "none"
+        if explicit_non_image:
+            raise ComfyError(
+                f"Checkpoint is not installed: {selected}. Installed checkpoints: {available}. "
+                "Models belong under /forge-data/models/checkpoints/."
+            )
         raise ComfyError(
-            f"Checkpoint is not installed: {selected}. Installed checkpoints: {available}. "
-            "Models belong under /forge-data/models/checkpoints/."
+            f"Image checkpoint is not installed: {selected}. "
+            f"Installed checkpoints: {available}. Models belong under "
+            "/forge-data/models/checkpoints/."
         )
 
     if selected is None:
