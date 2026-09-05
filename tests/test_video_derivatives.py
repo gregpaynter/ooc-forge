@@ -8,7 +8,7 @@ from forge.config import Config
 from forge.health import capabilities
 from forge.models import REFERENCE_PROMPT_MODEL, REFERENCE_VIDEO_MODEL
 from forge.prompt_compiler import _extract_json, _normalise_shots
-from forge.video import _frames_for_duration
+from forge.video import VIDEO_PROFILES, _frames_for_duration, video_profile
 
 
 def make_config(tmp_path: Path) -> Config:
@@ -57,6 +57,38 @@ def test_wan_frame_count_is_4n_plus_1_and_covers_planned_duration():
         frames = _frames_for_duration(seconds)
         assert (frames - 1) % 4 == 0
         assert frames >= round(seconds * 24)
+
+
+def test_video_profiles_preserve_production_and_add_fast_draft():
+    production = video_profile("production")
+    draft = video_profile("draft")
+
+    assert production == {
+        "id": "production",
+        "label": "Production 720p",
+        "width": 1280,
+        "height": 704,
+        "fps": 24,
+        "steps": 20,
+        "master_preset": "slow",
+        "master_crf": 14,
+        "mobile": True,
+    }
+    assert draft["width"] == 832
+    assert draft["height"] == 480
+    assert draft["fps"] == 16
+    assert draft["steps"] == 16
+    assert draft["mobile"] is False
+    assert _frames_for_duration(5.0, fps=int(draft["fps"])) == 81
+    assert _frames_for_duration(5.0, fps=int(production["fps"])) == 121
+    assert VIDEO_PROFILES["draft"]["width"] < VIDEO_PROFILES["production"]["width"]
+
+
+def test_video_workflow_exposes_sampling_steps_binding():
+    root = Path(__file__).resolve().parents[1]
+    manifest = json.loads((root / "workflows/video-wan22-ti2v/manifest.json").read_text(encoding="utf-8"))
+    bindings = {(item["source"], str(item["node"]), item["input"]) for item in manifest["bindings"]}
+    assert ("steps", "3", "steps") in bindings
 
 
 def test_prompt_and_video_model_pins_are_exact():
