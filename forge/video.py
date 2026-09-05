@@ -15,13 +15,39 @@ from forge.prompt_compiler import compile_video_prompt
 
 
 VIDEO_WORKFLOW_ID = "video-wan22-ti2v"
-VIDEO_FPS = 24
-VIDEO_WIDTH = 1280
-VIDEO_HEIGHT = 704
 VIDEO_NEGATIVE_PROMPT = (
     "oversaturated, overexposed, static, blurry, subtitles, text, watermark, low quality, "
     "distorted anatomy, duplicate subjects, abrupt scene change, identity drift, flicker"
 )
+VIDEO_PROFILES: dict[str, dict[str, Any]] = {
+    "draft": {
+        "label": "Draft preview",
+        "width": 832,
+        "height": 480,
+        "fps": 16,
+        "steps": 16,
+        "master_preset": "veryfast",
+        "master_crf": 20,
+        "mobile": False,
+    },
+    "production": {
+        "label": "Production 720p",
+        "width": 1280,
+        "height": 704,
+        "fps": 24,
+        "steps": 20,
+        "master_preset": "slow",
+        "master_crf": 14,
+        "mobile": True,
+    },
+}
+
+
+def video_profile(name: str) -> dict[str, Any]:
+    key = str(name or "production").strip().lower()
+    if key not in VIDEO_PROFILES:
+        raise RuntimeError(f"Unknown video quality profile: {key}")
+    return dict(VIDEO_PROFILES[key], id=key)
 
 
 def _sha256(path: Path) -> str:
@@ -54,7 +80,7 @@ def _safe_library_source(config: Config, relative_path: str) -> Path:
     return source
 
 
-def _frames_for_duration(seconds: float, fps: int = VIDEO_FPS) -> int:
+def _frames_for_duration(seconds: float, fps: int = 24) -> int:
     target = max(17, int(round(seconds * fps)))
     return ((target - 1 + 3) // 4) * 4 + 1
 
@@ -65,7 +91,11 @@ def _run_segment(
     *,
     input_name: str,
     prompt: str,
+    width: int,
+    height: int,
     frames: int,
+    fps: int,
+    steps: int,
     seed: int,
     destination: Path,
     timeout: int,
@@ -77,10 +107,11 @@ def _run_segment(
             "input_image": input_name,
             "prompt": prompt,
             "negative_prompt": VIDEO_NEGATIVE_PROMPT,
-            "width": VIDEO_WIDTH,
-            "height": VIDEO_HEIGHT,
+            "width": width,
+            "height": height,
             "frames": frames,
-            "fps": VIDEO_FPS,
+            "fps": fps,
+            "steps": steps,
             "seed": seed,
         },
     )
@@ -118,7 +149,14 @@ def _extract_last_frame(video: Path, destination: Path) -> None:
     )
 
 
-def _assemble_master(segments: list[Path], destination: Path, duration: float) -> None:
+def _assemble_master(
+    segments: list[Path],
+    destination: Path,
+    duration: float,
+    *,
+    preset: str,
+    crf: int,
+) -> None:
     concat = destination.parent / ".segments.txt"
     concat.write_text(
         "".join(f"file '{path.as_posix()}'\n" for path in segments),
@@ -144,9 +182,9 @@ def _assemble_master(segments: list[Path], destination: Path, duration: float) -
                 "-c:v",
                 "libx264",
                 "-preset",
-                "slow",
+                preset,
                 "-crf",
-                "14",
+                str(crf),
                 "-pix_fmt",
                 "yuv420p",
                 "-movflags",
@@ -206,6 +244,11 @@ def render_video_derivative(
     if not source_ref or not creative_prompt:
         raise RuntimeError("Video derivative requires the Seed Work and original creative prompt.")
 
+    profile = video_profile(str(request.get("quality_profile") or "production"))
+    width = int(profile["width"])
+    height = int(profile["height"])
+    fps = int(profile["fps"])
+    steps = int(profile["steps"])
     source = _safe_library_source(config, source_ref)
     duration = max(1.0, min(600.0, float(request.get("duration_seconds") or 30)))
     user_video_prompt = str(request.get("user_video_prompt") or "").strip()
@@ -215,7 +258,7 @@ def render_video_derivative(
         job_id,
         stage="PLANNING",
         percent=3,
-        message="Deriving temporal direction and shot plan with the local Qwen director.",
+        message=f"Deriving temporal direction and shot plan for {profile['label']}.",
     )
     prompt_plan = compile_video_prompt(
         config,
@@ -234,7 +277,10 @@ def render_video_derivative(
         job_id,
         stage="PREPARING",
         percent=8,
-        message="Shot plan ready. Preparing Wan2.2 video generation.",
+        message=(
+            f"Shot plan ready. Preparing Wan2.2 {profile['label']} generation "
+            f"at {width}×{height}, {fps} fps, {steps} steps."
+        ),
         current=0,
         total=len(prompt_plan["shots"]),
     )
@@ -252,7 +298,7 @@ def render_video_derivative(
             job_id,
             stage="GENERATING",
             percent=progress_before,
-            message=f"Generating Wan2.2 shot {index} of {total_shots}.",
+            message=f"Generating Wan2.2 {profile['label']} shot {index} of {total_shots}.",
             current=index,
             total=total_shots,
         )
@@ -261,7 +307,7 @@ def render_video_derivative(
         shutil.copy2(current_start, comfy_input)
         segment = segments_root / f"segment-{index:03d}.mp4"
         seed = secrets.randbits(63)
-        frames = _frames_for_duration(float(shot["duration"]))
+        frames = _frames_for_duration(float(shot["duration"]), fps=fps)
         segment_prompt = (
             f"{prompt_plan['resolved_video_prompt']}\n"
             f"Current shot: {shot['instruction']}\n"
@@ -273,7 +319,11 @@ def render_video_derivative(
                 client,
                 input_name=input_name,
                 prompt=segment_prompt,
+                width=width,
+                height=height,
                 frames=frames,
+                fps=fps,
+                steps=steps,
                 seed=seed,
                 destination=segment,
                 timeout=timeout,
@@ -290,7 +340,8 @@ def render_video_derivative(
                 "start": shot["start"],
                 "planned_duration": shot["duration"],
                 "frames": frames,
-                "fps": VIDEO_FPS,
+                "fps": fps,
+                "steps": steps,
                 "seed": seed,
                 "instruction": shot["instruction"],
                 "comfy_prompt_id": prompt_id,
@@ -308,28 +359,68 @@ def render_video_derivative(
             total=total_shots,
         )
 
-    master = root / "video-master.mp4"
-    mobile = root / "video-mobile.mp4"
+    is_production = profile["id"] == "production"
+    master = root / ("video-master.mp4" if is_production else "video-preview.mp4")
     update_job_progress(
         config,
         job_id,
         stage="ASSEMBLING",
         percent=86,
-        message=f"Assembling {total_shots} generated shots into the high-quality master.",
+        message=(
+            f"Assembling {total_shots} generated shots into the "
+            f"{'high-quality master' if is_production else 'draft preview'}."
+        ),
         current=total_shots,
         total=total_shots,
     )
-    _assemble_master(segments, master, duration)
-    update_job_progress(
+    _assemble_master(
+        segments,
+        master,
+        duration,
+        preset=str(profile["master_preset"]),
+        crf=int(profile["master_crf"]),
+    )
+
+    primary_role = "video_master" if is_production else "video_preview"
+    master_asset = _asset(
+        master,
         config,
-        job_id,
-        stage="TRANSCODING",
-        percent=94,
-        message="Creating the mobile rendition from the high-quality master.",
-        current=total_shots,
-        total=total_shots,
+        role=primary_role,
+        extra={
+            "duration_seconds": duration,
+            "width": width,
+            "height": height,
+            "fps": fps,
+            "steps": steps,
+            "profile": str(profile["id"]),
+        },
     )
-    _make_mobile(master, mobile)
+    assets = [master_asset]
+    mobile_asset: dict[str, Any] | None = None
+    if bool(profile["mobile"]):
+        mobile = root / "video-mobile.mp4"
+        update_job_progress(
+            config,
+            job_id,
+            stage="TRANSCODING",
+            percent=94,
+            message="Creating the mobile rendition from the high-quality master.",
+            current=total_shots,
+            total=total_shots,
+        )
+        _make_mobile(master, mobile)
+        mobile_asset = _asset(
+            mobile,
+            config,
+            role="video_mobile",
+            extra={
+                "duration_seconds": duration,
+                "profile": "mobile-h264-720",
+                "source_profile": str(profile["id"]),
+            },
+        )
+        assets.append(mobile_asset)
+
     update_job_progress(
         config,
         job_id,
@@ -338,19 +429,6 @@ def render_video_derivative(
         message="Finalising video assets and generation provenance.",
         current=total_shots,
         total=total_shots,
-    )
-
-    master_asset = _asset(
-        master,
-        config,
-        role="video_master",
-        extra={"duration_seconds": duration, "width": VIDEO_WIDTH, "height": VIDEO_HEIGHT, "fps": VIDEO_FPS},
-    )
-    mobile_asset = _asset(
-        mobile,
-        config,
-        role="video_mobile",
-        extra={"duration_seconds": duration, "profile": "mobile-h264-720"},
     )
     evidence = {
         "schema": "ooc.generation-evidence.v1",
@@ -366,23 +444,34 @@ def render_video_derivative(
         "video": {
             "model": "wan2.2_ti2v_5B_fp16.safetensors",
             "workflow_id": VIDEO_WORKFLOW_ID,
+            "quality_profile": str(profile["id"]),
+            "quality_label": str(profile["label"]),
             "duration_seconds": duration,
-            "fps": VIDEO_FPS,
-            "generation_width": VIDEO_WIDTH,
-            "generation_height": VIDEO_HEIGHT,
+            "fps": fps,
+            "steps": steps,
+            "generation_width": width,
+            "generation_height": height,
             "segments": segment_evidence,
-            "master_ref": master_asset["relative_path"],
-            "mobile_ref": mobile_asset["relative_path"],
+            "primary_ref": master_asset["relative_path"],
+            "master_ref": master_asset["relative_path"] if is_production else None,
+            "mobile_ref": mobile_asset["relative_path"] if mobile_asset else None,
         },
     }
-    return {
+    result: dict[str, Any] = {
         "title": str(request.get("title") or "Video Experience"),
         "description": str(request.get("description") or "") or None,
         "local_job_id": job_id,
-        "assets": [master_asset, mobile_asset],
+        "quality_profile": str(profile["id"]),
+        "quality_label": str(profile["label"]),
+        "assets": assets,
         "media_ref": master_asset["relative_path"],
-        "video_master_ref": master_asset["relative_path"],
-        "video_mobile_ref": mobile_asset["relative_path"],
         "video_prompt": prompt_plan,
         "generation_evidence": evidence,
     }
+    if is_production:
+        result["video_master_ref"] = master_asset["relative_path"]
+        if mobile_asset:
+            result["video_mobile_ref"] = mobile_asset["relative_path"]
+    else:
+        result["video_preview_ref"] = master_asset["relative_path"]
+    return result
