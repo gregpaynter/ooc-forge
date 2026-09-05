@@ -28,6 +28,16 @@
     "class_type": "EmptyLatentAudio",
     "_meta": {"title": "Audio Duration"}
   },
+  "9": {
+    "inputs": {
+      "positive": ["3", 0],
+      "negative": ["4", 0],
+      "seconds_start": 0.0,
+      "seconds_total": 30.0
+    },
+    "class_type": "ConditioningStableAudio",
+    "_meta": {"title": "Stable Audio Timing"}
+  },
   "6": {
     "inputs": {
       "seed": 1,
@@ -37,8 +47,8 @@
       "scheduler": "simple",
       "denoise": 1.0,
       "model": ["1", 0],
-      "positive": ["3", 0],
-      "negative": ["4", 0],
+      "positive": ["9", 0],
+      "negative": ["9", 1],
       "latent_image": ["5", 0]
     },
     "class_type": "KSampler",
