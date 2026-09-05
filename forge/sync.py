@@ -93,8 +93,37 @@ def _upload_assets(
             preview["duration_seconds"] = asset["duration_seconds"]
         if asset.get("profile"):
             preview["profile"] = asset["profile"]
+        if asset.get("source_video_ref"):
+            preview["source_video_ref"] = asset["source_video_ref"]
         uploaded.append(preview)
     return uploaded
+
+
+def _copy_role_fields(result: dict[str, Any], uploaded: list[dict[str, Any]]) -> None:
+    role_fields = {
+        "print_master": ("print_media_asset_id", "print_storage_ref", "print_sha256"),
+        "video_master": ("video_master_media_asset_id", "video_master_storage_ref", "video_master_sha256"),
+        "video_mobile": ("video_mobile_media_asset_id", "video_mobile_storage_ref", "video_mobile_sha256"),
+        "audio_master": ("audio_master_media_asset_id", "audio_master_storage_ref", "audio_master_sha256"),
+        "audio_web": ("audio_web_media_asset_id", "audio_web_storage_ref", "audio_web_sha256"),
+        "video_master_with_audio": (
+            "video_master_with_audio_media_asset_id",
+            "video_master_with_audio_storage_ref",
+            "video_master_with_audio_sha256",
+        ),
+        "video_mobile_with_audio": (
+            "video_mobile_with_audio_media_asset_id",
+            "video_mobile_with_audio_storage_ref",
+            "video_mobile_with_audio_sha256",
+        ),
+    }
+    for role, fields in role_fields.items():
+        asset = next((item for item in uploaded if item.get("role") == role), None)
+        if not asset:
+            continue
+        result[fields[0]] = asset["media_asset_id"]
+        result[fields[1]] = asset["storage_ref"]
+        result[fields[2]] = asset["sha256"]
 
 
 def _heartbeat_and_job(config: Config, secrets_value: dict[str, Any]) -> None:
@@ -147,21 +176,7 @@ def _heartbeat_and_job(config: Config, secrets_value: dict[str, Any]) -> None:
             result["preview_ref"] = preview["storage_ref"]
             result["preview_sha256"] = preview["sha256"]
             result["assets"] = uploaded
-            print_asset = next((asset for asset in uploaded if asset.get("role") == "print_master"), None)
-            if print_asset:
-                result["print_media_asset_id"] = print_asset["media_asset_id"]
-                result["print_storage_ref"] = print_asset["storage_ref"]
-                result["print_sha256"] = print_asset["sha256"]
-            video_master = next((asset for asset in uploaded if asset.get("role") == "video_master"), None)
-            video_mobile = next((asset for asset in uploaded if asset.get("role") == "video_mobile"), None)
-            if video_master:
-                result["video_master_media_asset_id"] = video_master["media_asset_id"]
-                result["video_master_storage_ref"] = video_master["storage_ref"]
-                result["video_master_sha256"] = video_master["sha256"]
-            if video_mobile:
-                result["video_mobile_media_asset_id"] = video_mobile["media_asset_id"]
-                result["video_mobile_storage_ref"] = video_mobile["storage_ref"]
-                result["video_mobile_sha256"] = video_mobile["sha256"]
+            _copy_role_fields(result, uploaded)
         _request(
             "POST",
             f"{origin}/api/forge/jobs/{remote_id}/complete",
