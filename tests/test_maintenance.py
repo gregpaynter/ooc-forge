@@ -78,3 +78,18 @@ def test_git_updater_seeds_all_immutable_workflows():
         assert workflow in updater
     assert '"$FORGE_DATA_ROOT/workflows/$workflow/manifest.json"' in updater
     assert '"$FORGE_DATA_ROOT/workflows/$workflow/workflow.json"' in updater
+
+
+def test_git_updater_preserves_runtime_traverse_and_execute_permissions():
+    updater = (ROOT / "scripts/ooc-forge-git-update").read_text(encoding="utf-8")
+    assert 'install -d -m 0755 "$SOURCE"' in updater
+    assert 'chmod 0755 "$INSTALL_ROOT"' in updater
+    assert 'chgrp -R forge "$INSTALL_ROOT/.venv"' in updater
+    assert 'chmod -R g+rX "$INSTALL_ROOT/.venv"' in updater
+
+
+def test_git_updater_builds_runtime_venv_at_final_path():
+    updater = (ROOT / "scripts/ooc-forge-git-update").read_text(encoding="utf-8")
+    assert 'python3 -m venv "$INSTALL_ROOT/.venv"' in updater
+    assert '"$INSTALL_ROOT/.venv/bin/python" -m pip install -q "$INSTALL_ROOT"' in updater
+    assert 'mv "$VENV" "$INSTALL_ROOT/.venv"' not in updater
